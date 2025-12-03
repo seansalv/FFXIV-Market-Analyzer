@@ -100,9 +100,13 @@ async function main() {
     }
 
     let processed = 0;
+    let itemsInsertedInBatches = 0;
+    let itemsUpdatedInBatches = 0;
+    
     for (const batch of batches) {
       console.log(`   Processing batch ${Math.floor(processed / ITEM_BATCH_SIZE) + 1}/${batches.length} (${batch.length} items)...`);
       
+      // Process items in this batch
       for (const itemId of batch) {
         try {
           const itemData = await fetchItemData(itemId);
@@ -137,49 +141,44 @@ async function main() {
         processed++;
       }
       
-      console.log(`   ✓ Processed ${processed}/${itemIds.length} items`);
+      // Insert items from this batch into database immediately
+      // This ensures progress is saved even if script is interrupted
+      for (const itemId of batch) {
+        const metadata = itemMetadata.get(itemId);
+        if (metadata) {
+          try {
+            const existingItem = await getItem(itemId);
+            const shouldUpdate = !existingItem || 
+              existingItem.name === itemId.toString() || 
+              !existingItem.category ||
+              existingItem.name !== metadata.name;
+
+            if (shouldUpdate) {
+              await upsertItem({
+                id: itemId,
+                name: metadata.name,
+                category: metadata.category,
+                is_craftable: metadata.isCraftable,
+                icon_url: metadata.iconUrl,
+              });
+              if (existingItem) {
+                itemsUpdatedInBatches++;
+              } else {
+                itemsInsertedInBatches++;
+              }
+            }
+          } catch (error) {
+            // Continue on error, don't stop the batch
+          }
+        }
+      }
+      
+      console.log(`   ✓ Processed ${processed}/${itemIds.length} items (${itemsInsertedInBatches} new, ${itemsUpdatedInBatches} updated in DB)`);
     }
     
     const itemsWithNames = Array.from(itemMetadata.values()).filter(m => m.name && !/^\d+$/.test(m.name));
-    console.log(`\n✅ Fetched metadata for ${itemsWithNames.length} items with names, ${itemIds.length - itemsWithNames.length} items pending\n`);
-
-    // Insert ALL items into database (regardless of market data)
-    // This ensures items are available for investigation even if they have no current market activity
-    console.log('💾 Inserting all items into database...\n');
-    let itemsInserted = 0;
-    let itemsUpdated = 0;
-    
-    for (const [itemId, metadata] of itemMetadata.entries()) {
-      try {
-        const existingItem = await getItem(itemId);
-        const shouldUpdate = !existingItem || 
-          existingItem.name === itemId.toString() || 
-          !existingItem.category ||
-          existingItem.name !== metadata.name;
-
-        if (shouldUpdate) {
-          await upsertItem({
-            id: itemId,
-            name: metadata.name,
-            category: metadata.category,
-            is_craftable: metadata.isCraftable,
-            icon_url: metadata.iconUrl,
-          });
-          if (existingItem) {
-            itemsUpdated++;
-          } else {
-            itemsInserted++;
-          }
-        }
-        
-        if ((itemsInserted + itemsUpdated) % 100 === 0) {
-          console.log(`   ✓ Processed ${itemsInserted + itemsUpdated}/${itemMetadata.size} items (${itemsInserted} new, ${itemsUpdated} updated)...`);
-        }
-      } catch (error) {
-        console.warn(`   ⚠ Failed to insert item ${itemId}:`, error instanceof Error ? error.message : error);
-      }
-    }
-    console.log(`\n✅ Database updated: ${itemsInserted} new items inserted, ${itemsUpdated} items updated\n`);
+    console.log(`\n✅ Fetched metadata for ${itemsWithNames.length} items with names, ${itemIds.length - itemsWithNames.length} items pending`);
+    console.log(`✅ Database: ${itemsInsertedInBatches} new items inserted, ${itemsUpdatedInBatches} items updated\n`);
 
     // Fetch and calculate recipe costs for craftable items (in batches)
     const craftableItems = Array.from(itemMetadata.entries()).filter(([_, m]) => m.isCraftable && m.recipeId);
