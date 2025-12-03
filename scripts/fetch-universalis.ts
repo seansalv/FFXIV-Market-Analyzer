@@ -47,12 +47,32 @@ import { upsertMarketSales, upsertDailyStats } from '../lib/db/market-data';
 import { fetchItemData, fetchRecipeData } from '../lib/xivapi/client';
 
 // Configuration
-const WORLDS_TO_INGEST = 'all-na'; // 'all-na', 'aether', 'primal', 'crystal', 'dynamis', or specific world name
+const WORLDS_TO_INGEST: string = 'all-na'; // 'all-na', 'aether', 'primal', 'crystal', 'dynamis', or specific world name
 const USE_ALL_ITEMS = true; // Set to true to ingest ALL marketable items, false to use getPopularItemIds()
 const ITEM_BATCH_SIZE = 100; // Process items in batches to avoid overwhelming APIs
 
+// Parse command-line arguments for limit flag
+function parseArgs(): { limit?: number } {
+  const args = process.argv.slice(2);
+  const limitIndex = args.findIndex(arg => arg === '--limit' || arg === '-l');
+  
+  if (limitIndex !== -1 && limitIndex + 1 < args.length) {
+    const limitValue = parseInt(args[limitIndex + 1], 10);
+    if (!isNaN(limitValue) && limitValue > 0) {
+      return { limit: limitValue };
+    }
+  }
+  
+  return {};
+}
+
 async function main() {
+  const { limit } = parseArgs();
+  
   console.log('🚀 Starting Universalis data ingestion...\n');
+  if (limit) {
+    console.log(`⚠️  LIMIT MODE: Processing only first ${limit} items (for testing)\n`);
+  }
 
   try {
     // Get worlds to process
@@ -77,9 +97,20 @@ async function main() {
     if (USE_ALL_ITEMS) {
       console.log('📋 Fetching all marketable items from Universalis...');
       itemIds = await getAllMarketableItemIds();
-      console.log(`📦 Found ${itemIds.length} marketable items to track\n`);
+      console.log(`📦 Found ${itemIds.length} marketable items to track`);
+      
+      // Apply limit if specified
+      if (limit && limit > 0) {
+        itemIds = itemIds.slice(0, limit);
+        console.log(`📦 Limited to first ${itemIds.length} items (--limit ${limit})\n`);
+      } else {
+        console.log('\n');
+      }
     } else {
       itemIds = getPopularItemIds();
+      if (limit && limit > 0) {
+        itemIds = itemIds.slice(0, limit);
+      }
       console.log(`📦 Tracking ${itemIds.length} items (using curated list)\n`);
     }
 

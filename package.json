@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "ingest": "tsx scripts/fetch-universalis.ts",
+    "ingest:test": "tsx scripts/fetch-universalis.ts --limit 100",
+    "test:endpoints": "tsx scripts/test-universalis-endpoints.ts",
     "add-recipe": "tsx scripts/add-recipe.ts",
     "add-items": "tsx scripts/add-items-to-track.ts",
     "db:migrate": "supabase migration up"

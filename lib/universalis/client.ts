@@ -1,13 +1,13 @@
 /**
  * Universalis API client with rate limiting and retry logic
- * Rate limit: 10 requests per second
+ * Rate limit: 1 request per second (60 per minute) - recommended by Universalis
  * Documentation: https://universalis.app/docs/index.html
  */
 
 import type { UniversalisMarketData } from '../types/api';
 
 const BASE_URL = process.env.UNIVERSALIS_API_URL || 'https://universalis.app/api/v2';
-const RATE_LIMIT_RPS = 10; // Requests per second
+const RATE_LIMIT_RPS = 1; // 1 request per second (60 per minute) - recommended by Universalis
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -116,7 +116,9 @@ export async function fetchMarketData(
 
 /**
  * Fetch market data for multiple items on a specific world or data center
- * Universalis supports up to 100 items per request via the market-board endpoint
+ * Universalis API v2: Use query parameter on the world endpoint
+ * Format: /api/v2/{worldOrDc}?items={itemIds}
+ * Supports up to 100 items per request
  */
 export async function fetchMarketDataBatch(
   worldOrDc: string,
@@ -141,10 +143,11 @@ export async function fetchMarketDataBatch(
     return results;
   }
 
-  // Universalis API v2 batch endpoint: /api/v2/market-board/{worldOrDc}?items={itemIds}
+  // Universalis API v2 batch endpoint: /api/v2/{worldOrDc}?items={itemIds}
+  // Note: According to docs, items should be comma-separated query param
   const itemsParam = itemIds.join(',');
   const worldName = worldOrDc.toLowerCase();
-  const url = `${BASE_URL}/market-board/${worldName}?items=${itemsParam}`;
+  const url = `${BASE_URL}/${worldName}?items=${itemsParam}`;
 
   return rateLimiter.execute(async () => {
     try {
