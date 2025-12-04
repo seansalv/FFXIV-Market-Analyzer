@@ -116,8 +116,9 @@ export async function fetchMarketData(
 
 /**
  * Fetch market data for multiple items on a specific world or data center
- * Universalis API v2: Use query parameter on the world endpoint
- * Format: /api/v2/{worldOrDc}?items={itemIds}
+ * Universalis API v2: GET /api/v2/{world}/{itemIds} (comma-separated in path)
+ * Format: GET /api/v2/ultros/36113,36114,36115,...
+ * Response: { itemIDs: [...], items: { "36113": {...}, "36114": {...} }, ... }
  * Supports up to 100 items per request
  */
 export async function fetchMarketDataBatch(
@@ -143,26 +144,32 @@ export async function fetchMarketDataBatch(
     return results;
   }
 
-  // Universalis API v2 batch endpoint: /api/v2/{worldOrDc}?items={itemIds}
-  // Note: According to docs, items should be comma-separated query param
-  const itemsParam = itemIds.join(',');
+  // Universalis API v2 batch endpoint: GET /api/v2/{world}/{itemIds}
+  // Format: GET /api/v2/ultros/36113,36114,36115,... (comma-separated in path)
+  // Response structure: { itemIDs: [...], items: { "36113": {...}, "36114": {...} }, ... }
   const worldName = worldOrDc.toLowerCase();
-  const url = `${BASE_URL}/${worldName}?items=${itemsParam}`;
+  const itemsParam = itemIds.join(',');
+  const url = `${BASE_URL}/${worldName}/${itemsParam}`;
 
   return rateLimiter.execute(async () => {
     try {
       const response = await fetchWithRetry(url);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
       
-      // The batch endpoint returns an object with item IDs as keys
-      // If no data exists for items, they may not be in the response
-      if (!data || typeof data !== 'object') {
+      // The batch endpoint returns: { itemIDs: [...], items: { "itemId": {...} }, ... }
+      // Market data is nested in the 'items' object with item IDs as string keys
+      if (!data || typeof data !== 'object' || !data.items) {
         return {};
       }
       
-      // Filter out any null/undefined entries
+      // Extract items from the nested 'items' object
       const result: Record<number, UniversalisMarketData> = {};
-      for (const [key, value] of Object.entries(data)) {
+      for (const [key, value] of Object.entries(data.items)) {
         const itemId = parseInt(key, 10);
         if (!isNaN(itemId) && value && typeof value === 'object') {
           result[itemId] = value as UniversalisMarketData;

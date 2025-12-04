@@ -133,6 +133,7 @@ async function main() {
     let processed = 0;
     let itemsInsertedInBatches = 0;
     let itemsUpdatedInBatches = 0;
+    let itemsAlreadyUpToDate = 0;
     
     for (const batch of batches) {
       console.log(`   Processing batch ${Math.floor(processed / ITEM_BATCH_SIZE) + 1}/${batches.length} (${batch.length} items)...`);
@@ -197,6 +198,8 @@ async function main() {
               } else {
                 itemsInsertedInBatches++;
               }
+            } else {
+              itemsAlreadyUpToDate++;
             }
           } catch (error) {
             // Continue on error, don't stop the batch
@@ -204,12 +207,22 @@ async function main() {
         }
       }
       
-      console.log(`   ✓ Processed ${processed}/${itemIds.length} items (${itemsInsertedInBatches} new, ${itemsUpdatedInBatches} updated in DB)`);
+      const statusParts = [];
+      if (itemsInsertedInBatches > 0) statusParts.push(`${itemsInsertedInBatches} new`);
+      if (itemsUpdatedInBatches > 0) statusParts.push(`${itemsUpdatedInBatches} updated`);
+      if (itemsAlreadyUpToDate > 0) statusParts.push(`${itemsAlreadyUpToDate} already up-to-date`);
+      const statusText = statusParts.length > 0 ? ` (${statusParts.join(', ')})` : '';
+      
+      console.log(`   ✓ Processed ${processed}/${itemIds.length} items${statusText}`);
     }
     
     const itemsWithNames = Array.from(itemMetadata.values()).filter(m => m.name && !/^\d+$/.test(m.name));
     console.log(`\n✅ Fetched metadata for ${itemsWithNames.length} items with names, ${itemIds.length - itemsWithNames.length} items pending`);
-    console.log(`✅ Database: ${itemsInsertedInBatches} new items inserted, ${itemsUpdatedInBatches} items updated\n`);
+    const dbStatusParts = [];
+    if (itemsInsertedInBatches > 0) dbStatusParts.push(`${itemsInsertedInBatches} new`);
+    if (itemsUpdatedInBatches > 0) dbStatusParts.push(`${itemsUpdatedInBatches} updated`);
+    if (itemsAlreadyUpToDate > 0) dbStatusParts.push(`${itemsAlreadyUpToDate} already up-to-date`);
+    console.log(`✅ Database: ${dbStatusParts.length > 0 ? dbStatusParts.join(', ') : 'no changes'} items\n`);
 
     // Fetch and calculate recipe costs for craftable items (in batches)
     const craftableItems = Array.from(itemMetadata.entries()).filter(([_, m]) => m.isCraftable && m.recipeId);
