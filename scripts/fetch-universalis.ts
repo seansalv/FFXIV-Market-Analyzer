@@ -44,34 +44,44 @@ import { fetchMarketDataBatch, getPopularItemIds, getAllMarketableItemIds } from
 import { upsertItem, upsertRecipe, getItem } from '../lib/db/items';
 import { getAllNAWorlds, getWorldByName, getWorldsByDataCenter } from '../lib/db/worlds';
 import { upsertMarketSales, upsertDailyStats } from '../lib/db/market-data';
-import { fetchItemData, fetchRecipeData } from '../lib/xivapi/client';
+import { fetchItemData, fetchItemDataBatch, fetchRecipeData } from '../lib/xivapi/client';
 
 // Configuration
 const WORLDS_TO_INGEST: string = 'all-na'; // 'all-na', 'aether', 'primal', 'crystal', 'dynamis', or specific world name
 const USE_ALL_ITEMS = true; // Set to true to ingest ALL marketable items, false to use getPopularItemIds()
 const ITEM_BATCH_SIZE = 100; // Process items in batches to avoid overwhelming APIs
 
-// Parse command-line arguments for limit flag
-function parseArgs(): { limit?: number } {
+// Parse command-line arguments
+function parseArgs(): { limit?: number; skipRecipes?: boolean } {
   const args = process.argv.slice(2);
-  const limitIndex = args.findIndex(arg => arg === '--limit' || arg === '-l');
+  const result: { limit?: number; skipRecipes?: boolean } = {};
   
+  // Parse --limit flag
+  const limitIndex = args.findIndex(arg => arg === '--limit' || arg === '-l');
   if (limitIndex !== -1 && limitIndex + 1 < args.length) {
     const limitValue = parseInt(args[limitIndex + 1], 10);
     if (!isNaN(limitValue) && limitValue > 0) {
-      return { limit: limitValue };
+      result.limit = limitValue;
     }
   }
   
-  return {};
+  // Parse --skip-recipes flag
+  if (args.includes('--skip-recipes')) {
+    result.skipRecipes = true;
+  }
+  
+  return result;
 }
 
 async function main() {
-  const { limit } = parseArgs();
+  const { limit, skipRecipes } = parseArgs();
   
   console.log('🚀 Starting Universalis data ingestion...\n');
   if (limit) {
     console.log(`⚠️  LIMIT MODE: Processing only first ${limit} items (for testing)\n`);
+  }
+  if (skipRecipes) {
+    console.log(`⚠️  SKIP RECIPES: Recipe cost calculation will be skipped\n`);
   }
 
   try {
@@ -138,10 +148,13 @@ async function main() {
     for (const batch of batches) {
       console.log(`   Processing batch ${Math.floor(processed / ITEM_BATCH_SIZE) + 1}/${batches.length} (${batch.length} items)...`);
       
-      // Process items in this batch
-      for (const itemId of batch) {
-        try {
-          const itemData = await fetchItemData(itemId);
+      // Fetch all items in this batch with a single API call
+      try {
+        const batchResults = await fetchItemDataBatch(batch);
+        
+        // Process results from batch
+        for (const itemId of batch) {
+          const itemData = batchResults.get(itemId);
           if (itemData) {
             // v2 API: nested objects are in fields property
             const categoryName = itemData.ItemUICategory?.fields?.Name || itemData.ItemKind?.fields?.Name || null;
@@ -155,7 +168,7 @@ async function main() {
               recipeId: recipeId,
             });
           } else {
-            // Set default metadata if fetch fails
+            // Set default metadata if item not found in batch response
             itemMetadata.set(itemId, {
               name: itemId.toString(),
               category: null,
@@ -164,8 +177,12 @@ async function main() {
               recipeId: null,
             });
           }
-        } catch (error) {
-          // Set default metadata on error
+          processed++;
+        }
+      } catch (error) {
+        // If batch fails, set default metadata for all items in batch
+        console.warn(`   ⚠ Batch fetch failed, setting default metadata for ${batch.length} items`);
+        for (const itemId of batch) {
           itemMetadata.set(itemId, {
             name: itemId.toString(),
             category: null,
@@ -173,8 +190,8 @@ async function main() {
             iconUrl: null,
             recipeId: null,
           });
+          processed++;
         }
-        processed++;
       }
       
       // Insert items from this batch into database immediately
@@ -229,11 +246,13 @@ async function main() {
     console.log(`✅ Database: ${dbStatusParts.length > 0 ? dbStatusParts.join(', ') : 'no changes'} items\n`);
 
     // Fetch and calculate recipe costs for craftable items (in batches)
-    const craftableItems = Array.from(itemMetadata.entries()).filter(([_, m]) => m.isCraftable && m.recipeId);
-    console.log(`\n🧪 Calculating recipe costs for ${craftableItems.length} craftable items...\n`);
-    
-    const firstWorld = worlds[0]; // Use first world's prices for cost calculation
-    if (firstWorld && craftableItems.length > 0) {
+    // Skip if --skip-recipes flag is set
+    if (!skipRecipes) {
+      const craftableItems = Array.from(itemMetadata.entries()).filter(([_, m]) => m.isCraftable && m.recipeId);
+      console.log(`\n🧪 Calculating recipe costs for ${craftableItems.length} craftable items...\n`);
+      
+      const firstWorld = worlds[0]; // Use first world's prices for cost calculation
+      if (firstWorld && craftableItems.length > 0) {
       // Process craftable items in smaller batches to avoid rate limits
       const recipeBatches: Array<[number, typeof itemMetadata extends Map<number, infer V> ? V : never]>[] = [];
       for (let i = 0; i < craftableItems.length; i += 50) {
@@ -248,8 +267,9 @@ async function main() {
               const recipeData = await fetchRecipeData(metadata.recipeId);
               if (recipeData && recipeData.Ingredients && recipeData.Ingredients.length > 0) {
                 // Calculate material cost using first world's current prices
+                // v2 API: ItemIngredient is a nested ref with row_id/value
                 const ingredientIds = recipeData.Ingredients
-                  .map(ing => ing.ItemIngredient?.ID)
+                  .map(ing => ing.ItemIngredient?.row_id || ing.ItemIngredient?.value)
                   .filter((id): id is number => !!id);
 
                 if (ingredientIds.length > 0) {
@@ -294,6 +314,11 @@ async function main() {
         }
         console.log(`   ✓ Processed ${recipeProcessed}/${craftableItems.length} recipes`);
       }
+      } else {
+        console.log(`   ℹ️  No craftable items found or no worlds available`);
+      }
+    } else {
+      console.log(`\n⏭️  Skipping recipe cost calculation (--skip-recipes flag set)\n`);
     }
 
     console.log('\n📊 Processing market data for each world...\n');
@@ -308,7 +333,11 @@ async function main() {
       worldItemBatches.push(itemIds.slice(i, i + ITEM_BATCH_SIZE));
     }
 
-    for (const world of worlds) {
+    // Process a single world (extracted for parallel processing)
+    async function processWorld(world: typeof worlds[0]): Promise<{ processed: number; errors: number }> {
+      let worldProcessed = 0;
+      let worldErrors = 0;
+      
       console.log(`\n🌍 Processing ${world.name} (${world.data_center})...`);
 
       try {
@@ -331,12 +360,16 @@ async function main() {
         
         if (Object.keys(marketDataMap).length === 0) {
           console.log(`   ⚠ No market data found for any items on ${world.name}`);
-          continue;
+          return { processed: 0, errors: 0 };
         }
         
         console.log(`   ✓ Fetched data for ${Object.keys(marketDataMap).length} items`);
 
         // Process each item
+        let itemsSaved = 0;
+        let worldSalesInserted = 0;
+        let worldStatsUpdated = 0;
+        
         for (const [itemIdStr, marketData] of Object.entries(marketDataMap)) {
           const itemId = parseInt(itemIdStr, 10);
 
@@ -370,22 +403,55 @@ async function main() {
                 world.id,
                 marketData.recentHistory
               );
-              console.log(`   ✓ Item ${itemId}: ${inserted} sales inserted`);
+              worldSalesInserted += inserted;
             }
 
             // Calculate and store daily stats
             await upsertDailyStats(itemId, world.id, marketData);
-            console.log(`   ✓ Item ${itemId}: Daily stats updated`);
+            worldStatsUpdated++;
+            itemsSaved++;
 
-            totalProcessed++;
+            // Log progress every 100 items
+            if (itemsSaved % 100 === 0) {
+              console.log(`   ✓ Processed ${itemsSaved}/${Object.keys(marketDataMap).length} items...`);
+            }
           } catch (error) {
             console.error(`   ✗ Error processing item ${itemId}:`, error);
-            totalErrors++;
+            worldErrors++;
           }
         }
+        
+        // Summary for this world
+        console.log(`   ✅ ${world.name}: ${itemsSaved} items processed, ${worldSalesInserted} sales inserted, ${worldStatsUpdated} stats updated`);
+        worldProcessed = itemsSaved;
       } catch (error) {
         console.error(`   ✗ Error processing world ${world.name}:`, error);
-        totalErrors++;
+        worldErrors++;
+      }
+      
+      return { processed: worldProcessed, errors: worldErrors };
+    }
+
+    // Process worlds in parallel batches of 8 (Universalis allows 8 simultaneous connections)
+    const PARALLEL_WORLDS = 8;
+    const worldBatches: typeof worlds[][] = [];
+    for (let i = 0; i < worlds.length; i += PARALLEL_WORLDS) {
+      worldBatches.push(worlds.slice(i, i + PARALLEL_WORLDS));
+    }
+
+    for (const worldBatch of worldBatches) {
+      // Process this batch of worlds in parallel
+      const results = await Promise.all(worldBatch.map(processWorld));
+      
+      // Aggregate results
+      for (const result of results) {
+        totalProcessed += result.processed;
+        totalErrors += result.errors;
+      }
+      
+      // Small delay between batches to avoid overwhelming the API
+      if (worldBatches.indexOf(worldBatch) < worldBatches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 

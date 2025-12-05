@@ -1,13 +1,13 @@
 /**
  * Universalis API client with rate limiting and retry logic
- * Rate limit: 1 request per second (60 per minute) - recommended by Universalis
+ * Rate limit: 25 requests per second (50 req/s burst) - per Universalis API documentation
  * Documentation: https://universalis.app/docs/index.html
  */
 
 import type { UniversalisMarketData } from '../types/api';
 
 const BASE_URL = process.env.UNIVERSALIS_API_URL || 'https://universalis.app/api/v2';
-const RATE_LIMIT_RPS = 1; // 1 request per second (60 per minute) - recommended by Universalis
+const RATE_LIMIT_RPS = 25; // 25 requests per second (50 req/s burst) - per Universalis API docs
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
@@ -16,7 +16,7 @@ class RateLimiter {
   private queue: Array<() => void> = [];
   private processing = false;
   private lastRequestTime = 0;
-  private minInterval = 1000 / RATE_LIMIT_RPS; // 100ms between requests
+  private minInterval = 1000 / RATE_LIMIT_RPS; // 40ms between requests (25 req/s)
 
   async execute<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {

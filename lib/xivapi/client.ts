@@ -103,6 +103,49 @@ export async function fetchItemData(itemId: number): Promise<XIVAPIItem | null> 
 }
 
 /**
+ * Fetch multiple items in a single batch request from XIVAPI v2
+ * v2 API format: GET /sheet/Item?rows={comma-separated-ids}&fields=...
+ * Returns a Map of itemId -> XIVAPIItem for successful fetches
+ */
+export async function fetchItemDataBatch(itemIds: number[]): Promise<Map<number, XIVAPIItem>> {
+  if (itemIds.length === 0) {
+    return new Map();
+  }
+
+  const result = new Map<number, XIVAPIItem>();
+  
+  try {
+    // Build comma-separated list of item IDs
+    const rowsParam = itemIds.join(',');
+    const url = `${BASE_URL}/sheet/Item?rows=${rowsParam}&fields=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe.ID,ClassJobCategory.Name&language=en`;
+    
+    const response = await rateLimitedFetch(url);
+    const data = await response.json();
+    
+    // v2 batch endpoint returns an array of row objects
+    // Each row has: { schema, version, row_id, fields: {...} }
+    if (Array.isArray(data)) {
+      for (const row of data) {
+        if (row.fields && row.row_id) {
+          result.set(row.row_id, row.fields as XIVAPIItem);
+        }
+      }
+    } else if (data.fields && Array.isArray(data.fields)) {
+      // Alternative response format: { fields: [...] }
+      for (const row of data.fields) {
+        if (row.row_id && row.fields) {
+          result.set(row.row_id, row.fields as XIVAPIItem);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`Failed to fetch batch of ${itemIds.length} items from XIVAPI v2:`, error);
+  }
+  
+  return result;
+}
+
+/**
  * Fetch recipe data from XIVAPI v2
  * v2 API format: GET /sheet/Recipe/{id}?fields=...
  */
@@ -138,7 +181,8 @@ export async function calculateMaterialCost(
   let totalCost = 0;
 
   for (const ingredient of recipe.Ingredients || []) {
-    const itemId = ingredient.ItemIngredient?.ID;
+    // v2 API: ItemIngredient is a nested ref with row_id/value
+    const itemId = ingredient.ItemIngredient?.row_id || ingredient.ItemIngredient?.value;
     const quantity = ingredient.AmountIngredient || 0;
 
     if (itemId && quantity > 0) {
