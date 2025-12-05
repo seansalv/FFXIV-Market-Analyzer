@@ -143,12 +143,16 @@ async function main() {
         try {
           const itemData = await fetchItemData(itemId);
           if (itemData) {
+            // v2 API: nested objects are in fields property
+            const categoryName = itemData.ItemUICategory?.fields?.Name || itemData.ItemKind?.fields?.Name || null;
+            const recipeId = itemData.Recipe?.row_id || itemData.Recipe?.value || null;
+            
             itemMetadata.set(itemId, {
               name: itemData.Name || itemId.toString(),
-              category: itemData.ItemUICategory?.Name || itemData.ItemKind?.Name || null,
-              isCraftable: !!itemData.Recipe?.ID,
+              category: categoryName,
+              isCraftable: !!recipeId,
               iconUrl: itemData.Icon ? `https://xivapi.com${itemData.Icon}` : null,
-              recipeId: itemData.Recipe?.ID || null,
+              recipeId: recipeId,
             });
           } else {
             // Set default metadata if fetch fails
@@ -254,7 +258,8 @@ async function main() {
                     let totalCost = 0;
 
                     for (const ingredient of recipeData.Ingredients) {
-                      const ingredientId = ingredient.ItemIngredient?.ID;
+                      // v2 API: ItemIngredient is a nested ref with row_id/value and fields
+                      const ingredientId = ingredient.ItemIngredient?.row_id || ingredient.ItemIngredient?.value;
                       const quantity = ingredient.AmountIngredient || 0;
                       if (ingredientId && ingredientPrices[ingredientId]) {
                         const price = ingredientPrices[ingredientId].currentAveragePrice || 0;
@@ -269,8 +274,8 @@ async function main() {
                         material_list: {
                           recipeId: recipeData.ID,
                           ingredients: recipeData.Ingredients.map(ing => ({
-                            itemId: ing.ItemIngredient?.ID,
-                            name: ing.ItemIngredient?.Name,
+                            itemId: ing.ItemIngredient?.row_id || ing.ItemIngredient?.value,
+                            name: ing.ItemIngredient?.fields?.Name,
                             quantity: ing.AmountIngredient,
                           })),
                         },

@@ -1,9 +1,9 @@
 /**
- * XIVAPI client for fetching item metadata and recipe data
- * Documentation: https://xivapi.com/docs
+ * XIVAPI v2 client for fetching item metadata and recipe data
+ * Documentation: https://v2.xivapi.com/api/docs
  */
 
-const BASE_URL = 'https://xivapi.com';
+const BASE_URL = 'https://v2.xivapi.com/api';
 
 // Simple rate limiter for XIVAPI (they have rate limits too)
 const requestQueue: Array<() => void> = [];
@@ -42,66 +42,84 @@ async function processQueue() {
   processing = false;
 }
 
+// v2 API response structure
+interface XIVAPIv2Response<T> {
+  schema: string;
+  version: string;
+  row_id: number;
+  fields: T;
+}
+
+interface XIVAPIv2NestedRef {
+  value: number;
+  sheet: string;
+  row_id: number;
+  fields?: {
+    Name?: string;
+    [key: string]: any;
+  };
+}
+
 export interface XIVAPIItem {
   ID: number;
   Name: string;
-  ItemKind?: {
-    Name: string;
-  };
-  ItemUICategory?: {
-    Name: string;
-  };
+  ItemKind?: XIVAPIv2NestedRef;
+  ItemUICategory?: XIVAPIv2NestedRef;
   Icon?: string;
-  Recipe?: {
-    ID: number;
-  };
-  ClassJobCategory?: {
-    Name: string;
-  };
+  Recipe?: XIVAPIv2NestedRef;
+  ClassJobCategory?: XIVAPIv2NestedRef;
 }
 
 export interface XIVAPIRecipe {
   ID: number;
-  ItemResult: {
-    ID: number;
-    Name: string;
-  };
+  ItemResult?: XIVAPIv2NestedRef;
   AmountResult: number;
   Ingredients: Array<{
-    ItemIngredient: {
-      ID: number;
-      Name: string;
-    };
+    ItemIngredient?: XIVAPIv2NestedRef;
     AmountIngredient: number;
   }>;
 }
 
 /**
- * Fetch item data from XIVAPI
+ * Fetch item data from XIVAPI v2
+ * v2 API format: GET /sheet/Item/{id}?fields=ID,Name,ItemKind.Name,...
  */
 export async function fetchItemData(itemId: number): Promise<XIVAPIItem | null> {
   try {
-    const url = `${BASE_URL}/Item/${itemId}?columns=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe.ID,ClassJobCategory.Name`;
+    const url = `${BASE_URL}/sheet/Item/${itemId}?fields=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe.ID,ClassJobCategory.Name&language=en`;
     const response = await rateLimitedFetch(url);
-    const data = await response.json();
-    return data as XIVAPIItem;
+    const data: XIVAPIv2Response<XIVAPIItem> = await response.json();
+    
+    // v2 returns data in a 'fields' object
+    if (!data.fields) {
+      return null;
+    }
+    
+    return data.fields;
   } catch (error) {
-    console.warn(`Failed to fetch item ${itemId} from XIVAPI:`, error);
+    console.warn(`Failed to fetch item ${itemId} from XIVAPI v2:`, error);
     return null;
   }
 }
 
 /**
- * Fetch recipe data from XIVAPI
+ * Fetch recipe data from XIVAPI v2
+ * v2 API format: GET /sheet/Recipe/{id}?fields=...
  */
 export async function fetchRecipeData(recipeId: number): Promise<XIVAPIRecipe | null> {
   try {
-    const url = `${BASE_URL}/Recipe/${recipeId}?columns=ID,ItemResult.ID,ItemResult.Name,AmountResult,Ingredients.ItemIngredient.ID,Ingredients.ItemIngredient.Name,Ingredients.AmountIngredient`;
+    const url = `${BASE_URL}/sheet/Recipe/${recipeId}?fields=ID,ItemResult.ID,ItemResult.Name,AmountResult,Ingredients.ItemIngredient.ID,Ingredients.ItemIngredient.Name,Ingredients.AmountIngredient&language=en`;
     const response = await rateLimitedFetch(url);
-    const data = await response.json();
-    return data as XIVAPIRecipe;
+    const data: XIVAPIv2Response<XIVAPIRecipe> = await response.json();
+    
+    // v2 returns data in a 'fields' object
+    if (!data.fields) {
+      return null;
+    }
+    
+    return data.fields;
   } catch (error) {
-    console.warn(`Failed to fetch recipe ${recipeId} from XIVAPI:`, error);
+    console.warn(`Failed to fetch recipe ${recipeId} from XIVAPI v2:`, error);
     return null;
   }
 }
