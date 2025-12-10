@@ -44,7 +44,7 @@ import { fetchMarketDataBatch, getPopularItemIds, getAllMarketableItemIds } from
 import { upsertItem, upsertRecipe, getItem } from '../lib/db/items';
 import { getAllNAWorlds, getWorldByName, getWorldsByDataCenter } from '../lib/db/worlds';
 import { upsertMarketSales, upsertDailyStats } from '../lib/db/market-data';
-import { fetchItemData, fetchItemDataBatch, fetchRecipeData } from '../lib/xivapi/client';
+import { fetchItemData, fetchItemDataBatch, fetchRecipeData, fetchRecipeDataBatch } from '../lib/xivapi/client';
 
 // Configuration
 const WORLDS_TO_INGEST: string = 'all-na'; // 'all-na', 'aether', 'primal', 'crystal', 'dynamis', or specific world name
@@ -253,67 +253,88 @@ async function main() {
       
       const firstWorld = worlds[0]; // Use first world's prices for cost calculation
       if (firstWorld && craftableItems.length > 0) {
-      // Process craftable items in smaller batches to avoid rate limits
-      const recipeBatches: Array<[number, typeof itemMetadata extends Map<number, infer V> ? V : never]>[] = [];
-      for (let i = 0; i < craftableItems.length; i += 50) {
-        recipeBatches.push(craftableItems.slice(i, i + 50));
-      }
-
-      let recipeProcessed = 0;
-      for (const batch of recipeBatches) {
-        for (const [itemId, metadata] of batch) {
-          if (metadata.recipeId) {
-            try {
-              const recipeData = await fetchRecipeData(metadata.recipeId);
-              if (recipeData && recipeData.Ingredients && recipeData.Ingredients.length > 0) {
-                // Calculate material cost using first world's current prices
-                // v2 API: ItemIngredient is a nested ref with row_id/value
-                const ingredientIds = recipeData.Ingredients
-                  .map(ing => ing.ItemIngredient?.row_id || ing.ItemIngredient?.value)
-                  .filter((id): id is number => !!id);
-
-                if (ingredientIds.length > 0) {
-                  try {
-                    const ingredientPrices = await fetchMarketDataBatch(firstWorld.name, ingredientIds);
-                    let totalCost = 0;
-
-                    for (const ingredient of recipeData.Ingredients) {
-                      // v2 API: ItemIngredient is a nested ref with row_id/value and fields
-                      const ingredientId = ingredient.ItemIngredient?.row_id || ingredient.ItemIngredient?.value;
-                      const quantity = ingredient.AmountIngredient || 0;
-                      if (ingredientId && ingredientPrices[ingredientId]) {
-                        const price = ingredientPrices[ingredientId].currentAveragePrice || 0;
-                        totalCost += price * quantity;
-                      }
-                    }
-
-                    if (totalCost > 0) {
-                      await upsertRecipe({
-                        item_id: itemId,
-                        material_cost: Math.round(totalCost),
-                        material_list: {
-                          recipeId: recipeData.ID,
-                          ingredients: recipeData.Ingredients.map(ing => ({
-                            itemId: ing.ItemIngredient?.row_id || ing.ItemIngredient?.value,
-                            name: ing.ItemIngredient?.fields?.Name,
-                            quantity: ing.AmountIngredient,
-                          })),
-                        },
-                      });
-                    }
-                  } catch (priceError) {
-                    // Silently skip if price calculation fails
-                  }
-                }
+        // Batch fetch all recipe data first
+        const recipeIds = craftableItems.map(([_, m]) => m.recipeId!).filter(id => id > 0);
+        console.log(`   Fetching ${recipeIds.length} recipes from XIVAPI...`);
+        
+        // Fetch recipes in batches of 100
+        const recipeDataMap = new Map<number, any>();
+        const recipeBatchSize = 100;
+        for (let i = 0; i < recipeIds.length; i += recipeBatchSize) {
+          const batchIds = recipeIds.slice(i, i + recipeBatchSize);
+          try {
+            const batchResults = await fetchRecipeDataBatch(batchIds);
+            batchResults.forEach((value, key) => recipeDataMap.set(key, value));
+          } catch (error) {
+            // Fall back to individual fetches for this batch
+            for (const recipeId of batchIds) {
+              try {
+                const recipe = await fetchRecipeData(recipeId);
+                if (recipe) recipeDataMap.set(recipeId, recipe);
+              } catch (e) { /* skip */ }
+            }
+          }
+          console.log(`   ✓ Fetched ${Math.min(i + recipeBatchSize, recipeIds.length)}/${recipeIds.length} recipes`);
+        }
+        
+        // Collect all unique ingredient IDs across all recipes
+        const allIngredientIds = new Set<number>();
+        for (const [itemId, metadata] of craftableItems) {
+          const recipeData = recipeDataMap.get(metadata.recipeId!);
+          if (recipeData?.Ingredients) {
+            for (const ing of recipeData.Ingredients) {
+              const ingId = ing.ItemIngredient?.row_id || ing.ItemIngredient?.value;
+              if (ingId) allIngredientIds.add(ingId);
+            }
+          }
+        }
+        
+        // Batch fetch all ingredient prices at once
+        console.log(`   Fetching prices for ${allIngredientIds.size} unique ingredients...`);
+        const ingredientPrices = await fetchMarketDataBatch(firstWorld.name, Array.from(allIngredientIds));
+        console.log(`   ✓ Got prices for ${Object.keys(ingredientPrices).length} ingredients`);
+        
+        // Now process each craftable item with the cached data
+        let recipeProcessed = 0;
+        let recipesUpdated = 0;
+        for (const [itemId, metadata] of craftableItems) {
+          const recipeData = recipeDataMap.get(metadata.recipeId!);
+          if (recipeData?.Ingredients?.length > 0) {
+            let totalCost = 0;
+            
+            for (const ingredient of recipeData.Ingredients) {
+              const ingredientId = ingredient.ItemIngredient?.row_id || ingredient.ItemIngredient?.value;
+              const quantity = ingredient.AmountIngredient || 0;
+              if (ingredientId && ingredientPrices[ingredientId]) {
+                const price = ingredientPrices[ingredientId].currentAveragePrice || 0;
+                totalCost += price * quantity;
               }
-            } catch (recipeError) {
-              // Silently skip if recipe fetch fails
+            }
+            
+            if (totalCost > 0) {
+              try {
+                await upsertRecipe({
+                  item_id: itemId,
+                  material_cost: Math.round(totalCost),
+                  material_list: {
+                    recipeId: recipeData.ID,
+                    ingredients: recipeData.Ingredients.map((ing: any) => ({
+                      itemId: ing.ItemIngredient?.row_id || ing.ItemIngredient?.value,
+                      name: ing.ItemIngredient?.fields?.Name,
+                      quantity: ing.AmountIngredient,
+                    })),
+                  },
+                });
+                recipesUpdated++;
+              } catch (e) { /* skip */ }
             }
           }
           recipeProcessed++;
+          if (recipeProcessed % 500 === 0) {
+            console.log(`   ✓ Processed ${recipeProcessed}/${craftableItems.length} recipes (${recipesUpdated} updated)`);
+          }
         }
-        console.log(`   ✓ Processed ${recipeProcessed}/${craftableItems.length} recipes`);
-      }
+        console.log(`   ✅ Recipe processing complete: ${recipesUpdated}/${craftableItems.length} recipes with costs calculated`);
       } else {
         console.log(`   ℹ️  No craftable items found or no worlds available`);
       }

@@ -43,23 +43,34 @@ export async function GET(request: NextRequest) {
       timeframe: Timeframe;
     };
 
-    // Get worlds to query
+    // Get worlds to query and determine aggregation mode
+    const worldOrDc = params.worldOrDc || 'all-na';
     let worldIds: number[];
-    if (params.worldOrDc === 'all-na') {
+    let shouldAggregateByDC = false; // Aggregate across all worlds in DC
+    let dataCenterName: string | null = null;
+    let isSpecificWorld = false;
+    
+    if (worldOrDc === 'all-na') {
       const worlds = await getAllNAWorlds();
       worldIds = worlds.map((w) => w.id);
-    } else if (['aether', 'primal', 'crystal', 'dynamis'].includes(params.worldOrDc.toLowerCase())) {
-      const worlds = await getWorldsByDataCenter(params.worldOrDc.toLowerCase());
+      shouldAggregateByDC = true;
+      dataCenterName = 'All NA';
+    } else if (['aether', 'primal', 'crystal', 'dynamis'].includes(worldOrDc.toLowerCase())) {
+      const worlds = await getWorldsByDataCenter(worldOrDc.toLowerCase());
       worldIds = worlds.map((w) => w.id);
+      shouldAggregateByDC = true;
+      dataCenterName = worldOrDc.charAt(0).toUpperCase() + worldOrDc.slice(1).toLowerCase();
     } else {
-      const world = await getWorldByName(params.worldOrDc);
+      const world = await getWorldByName(worldOrDc);
       if (!world) {
         return NextResponse.json(
-          { error: `World not found: ${params.worldOrDc}` },
+          { error: `World not found: ${worldOrDc}` },
           { status: 400 }
         );
       }
       worldIds = [world.id];
+      isSpecificWorld = true;
+      dataCenterName = world.data_center.charAt(0).toUpperCase() + world.data_center.slice(1).toLowerCase();
     }
 
     // Calculate days for timeframe
@@ -87,6 +98,15 @@ export async function GET(request: NextRequest) {
       throw new Error(`Failed to query stats: ${statsError.message}`);
     }
 
+    // Diagnostic logging: Database query results
+    const uniqueItemIds = new Set((statsData || []).map((s: any) => s.item_id));
+    console.log(`[DEBUG] Database Query Results:`);
+    console.log(`  - Stats returned: ${statsData?.length || 0}`);
+    console.log(`  - Unique items: ${uniqueItemIds.size}`);
+    console.log(`  - World IDs queried: ${worldIds.join(', ')}`);
+    console.log(`  - Timeframe: ${params.timeframe} (${days} days, cutoff: ${cutoffDateStr})`);
+    console.log(`  - Aggregation mode: ${shouldAggregateByDC ? 'Data Center' : 'Per-World'}`);
+
     // Also fetch items separately to ensure we have all item metadata
     const { data: allItems } = await supabaseAdmin
       .from('items')
@@ -95,21 +115,50 @@ export async function GET(request: NextRequest) {
 
     const itemsMap = new Map((allItems || []).map((item: any) => [item.id, item]));
 
-    // Group stats by item_id and world_id, then aggregate
-    const itemWorldMap = new Map<string, any[]>();
+    // Diagnostic logging: Items map and filter values
+    console.log(`[DEBUG] Items Map and Filters:`);
+    console.log(`  - Items in map: ${itemsMap.size}`);
+    console.log(`  - Applied filters:`, {
+      minRevenue: params.minRevenue,
+      minSalesVelocity: params.minSalesVelocity,
+      minPrice: params.minPrice,
+      categories: params.categories,
+      craftableOnly: params.craftableOnly,
+      nonCraftableOnly: params.nonCraftableOnly,
+      maxListings: params.maxListings,
+      topN: params.topN,
+      rankingMetric: params.rankingMetric,
+    });
 
-    for (const stat of statsData || []) {
-      const key = `${stat.item_id}-${stat.world_id}`;
-      if (!itemWorldMap.has(key)) {
-        itemWorldMap.set(key, []);
+    // Group stats based on aggregation mode
+    const itemStatsMap = new Map<string, any[]>();
+
+    if (shouldAggregateByDC) {
+      // Aggregate by item_id only - combine stats from all worlds in the DC
+      for (const stat of (statsData || []) as any[]) {
+        const itemId = stat.item_id;
+        const key = String(itemId);
+        if (!itemStatsMap.has(key)) {
+          itemStatsMap.set(key, []);
+        }
+        itemStatsMap.get(key)!.push(stat);
       }
-      itemWorldMap.get(key)!.push(stat);
+    } else {
+      // Per-world mode: group by item_id-world_id (keep separate entries per world)
+      for (const stat of (statsData || []) as any[]) {
+        const key = `${stat.item_id}-${stat.world_id}`;
+        if (!itemStatsMap.has(key)) {
+          itemStatsMap.set(key, []);
+        }
+        itemStatsMap.get(key)!.push(stat);
+      }
     }
 
-    // If viewing all NA, optionally aggregate by item across all worlds
-    // For now, we'll show per-world data, but we can add aggregation later if needed
+    // Diagnostic logging: Aggregation grouping
+    console.log(`[DEBUG] Aggregation Grouping:`);
+    console.log(`  - Groups created: ${itemStatsMap.size}`);
 
-    // Calculate metrics for each item-world combination
+    // Calculate metrics for each item (aggregated across worlds if shouldAggregateByDC)
     const itemsWithMetrics: Array<{
       itemId: number;
       itemName: string;
@@ -120,19 +169,21 @@ export async function GET(request: NextRequest) {
       metrics: Awaited<ReturnType<typeof calculateMetrics>>;
     }> = [];
 
-    for (const [key, stats] of itemWorldMap.entries()) {
+    for (const [key, stats] of itemStatsMap.entries()) {
       if (stats.length === 0) continue;
 
-      const firstStat = stats[0];
+      const firstStat = stats[0] as any;
       const itemId = firstStat.item_id;
-      const worldId = firstStat.world_id;
-
+      
       // Get item from map or from join
-      const item = itemsMap.get(itemId) || (firstStat as any).items;
-      const world = (firstStat as any).worlds;
+      const item = itemsMap.get(itemId) || firstStat.items;
+      if (!item) continue;
 
-      if (!item || !world) continue;
+      // Get world info - use first stat's world for data center info
+      const world = firstStat.worlds;
+      if (!world) continue;
 
+      // Calculate metrics - this will aggregate across all stats (all worlds if aggregating)
       const metrics = await calculateMetrics(
         stats as any,
         params.timeframe,
@@ -144,16 +195,34 @@ export async function GET(request: NextRequest) {
         ? item.name.trim() 
         : `Item ${itemId}`;
 
+      // Determine display name based on aggregation mode
+      let displayWorldName: string;
+      let displayDataCenter: string;
+      
+      if (shouldAggregateByDC) {
+        // Show data center name when aggregating
+        displayWorldName = dataCenterName || 'Multiple Worlds';
+        displayDataCenter = dataCenterName?.toLowerCase() || world.data_center;
+      } else {
+        // Show specific world name
+        displayWorldName = world.name.charAt(0).toUpperCase() + world.name.slice(1);
+        displayDataCenter = world.data_center;
+      }
+
       itemsWithMetrics.push({
         itemId: itemId,
         itemName: itemName,
         category: item.category,
         isCraftable: item.is_craftable || false,
-        worldName: world.name.charAt(0).toUpperCase() + world.name.slice(1),
-        dataCenter: world.data_center,
+        worldName: displayWorldName,
+        dataCenter: displayDataCenter,
         metrics,
       });
     }
+
+    // Diagnostic logging: Metrics calculation
+    console.log(`[DEBUG] Metrics Calculation:`);
+    console.log(`  - Items with metrics calculated: ${itemsWithMetrics.length}`);
 
     // Apply filters
     const filtered = filterItems(itemsWithMetrics, {
@@ -166,11 +235,22 @@ export async function GET(request: NextRequest) {
       minPrice: params.minPrice,
     });
 
+    // Diagnostic logging: Filtering results
+    console.log(`[DEBUG] Filtering Results:`);
+    console.log(`  - Items before filtering: ${itemsWithMetrics.length}`);
+    console.log(`  - Items after filtering: ${filtered.length}`);
+    console.log(`  - Items removed by filters: ${itemsWithMetrics.length - filtered.length}`);
+
     // Rank items
     const ranked = rankItems(filtered, params.rankingMetric);
 
     // Take top N
     const topItems = ranked.slice(0, params.topN);
+
+    // Diagnostic logging: Final results
+    console.log(`[DEBUG] Final Results:`);
+    console.log(`  - Items after ranking: ${ranked.length}`);
+    console.log(`  - Top ${params.topN} items returned: ${topItems.length}`);
 
     // Convert to API response format
     const marketItems: MarketItem[] = topItems.map((item) => ({

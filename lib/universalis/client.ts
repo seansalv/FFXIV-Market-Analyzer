@@ -10,6 +10,7 @@ const BASE_URL = process.env.UNIVERSALIS_API_URL || 'https://universalis.app/api
 const RATE_LIMIT_RPS = 25; // 25 requests per second (50 req/s burst) - per Universalis API docs
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
+const CONCURRENT_BATCHES = 3; // Number of concurrent batch requests per call (within rate limit)
 
 // Simple rate limiter using a queue
 class RateLimiter {
@@ -136,10 +137,15 @@ export async function fetchMarketDataBatch(
       batches.push(itemIds.slice(i, i + 100));
     }
 
+    // Process batches concurrently in groups to maximize throughput within rate limits
     const results: Record<number, UniversalisMarketData> = {};
-    for (const batch of batches) {
-      const batchResults = await fetchMarketDataBatch(worldOrDc, batch);
-      Object.assign(results, batchResults);
+    for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
+      const concurrentBatches = batches.slice(i, i + CONCURRENT_BATCHES);
+      const batchPromises = concurrentBatches.map(batch => 
+        fetchMarketDataBatch(worldOrDc, batch)
+      );
+      const batchResults = await Promise.all(batchPromises);
+      batchResults.forEach(result => Object.assign(results, result));
     }
     return results;
   }
