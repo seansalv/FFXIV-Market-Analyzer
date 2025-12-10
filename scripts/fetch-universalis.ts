@@ -45,11 +45,17 @@ import { upsertItem, upsertRecipe, getItem } from '../lib/db/items';
 import { getAllNAWorlds, getWorldByName, getWorldsByDataCenter } from '../lib/db/worlds';
 import { upsertMarketSales, upsertDailyStats } from '../lib/db/market-data';
 import { fetchItemData, fetchItemDataBatch, fetchRecipeData, fetchRecipeDataBatch } from '../lib/xivapi/client';
+import type { World } from '../lib/types/database';
 
 // Configuration
 const WORLDS_TO_INGEST: string = 'all-na'; // 'all-na', 'aether', 'primal', 'crystal', 'dynamis', or specific world name
 const USE_ALL_ITEMS = true; // Set to true to ingest ALL marketable items, false to use getPopularItemIds()
 const ITEM_BATCH_SIZE = 100; // Process items in batches to avoid overwhelming APIs
+
+// Storage options - set to false to reduce database size
+// Raw sales are not used by the analytics dashboard (which only uses daily_item_stats)
+// Enable this if you need historical price charts or individual sale records
+const STORE_RAW_SALES = false; // Set to true to store individual sales in market_sales table
 
 // Parse command-line arguments
 function parseArgs(): { limit?: number; skipRecipes?: boolean } {
@@ -83,10 +89,13 @@ async function main() {
   if (skipRecipes) {
     console.log(`⚠️  SKIP RECIPES: Recipe cost calculation will be skipped\n`);
   }
+  if (!STORE_RAW_SALES) {
+    console.log(`ℹ️  RAW SALES DISABLED: Only storing aggregated daily stats (saves storage)\n`);
+  }
 
   try {
     // Get worlds to process
-    let worlds;
+    let worlds: World[];
     if (WORLDS_TO_INGEST === 'all-na') {
       worlds = await getAllNAWorlds();
       console.log(`📍 Processing all ${worlds.length} NA worlds`);
@@ -355,7 +364,7 @@ async function main() {
     }
 
     // Process a single world (extracted for parallel processing)
-    async function processWorld(world: typeof worlds[0]): Promise<{ processed: number; errors: number }> {
+    async function processWorld(world: World): Promise<{ processed: number; errors: number }> {
       let worldProcessed = 0;
       let worldErrors = 0;
       
@@ -417,8 +426,9 @@ async function main() {
               });
             }
 
-            // Store recent sales history
-            if (marketData.recentHistory && marketData.recentHistory.length > 0) {
+            // Store recent sales history (optional - not used by analytics dashboard)
+            // Enable STORE_RAW_SALES at top of file if you need individual sale records
+            if (STORE_RAW_SALES && marketData.recentHistory && marketData.recentHistory.length > 0) {
               const inserted = await upsertMarketSales(
                 itemId,
                 world.id,
@@ -427,7 +437,7 @@ async function main() {
               worldSalesInserted += inserted;
             }
 
-            // Calculate and store daily stats
+            // Calculate and store daily stats (this is what the analytics dashboard uses)
             await upsertDailyStats(itemId, world.id, marketData);
             worldStatsUpdated++;
             itemsSaved++;
@@ -443,7 +453,8 @@ async function main() {
         }
         
         // Summary for this world
-        console.log(`   ✅ ${world.name}: ${itemsSaved} items processed, ${worldSalesInserted} sales inserted, ${worldStatsUpdated} stats updated`);
+        const salesMsg = STORE_RAW_SALES ? `, ${worldSalesInserted} sales inserted` : '';
+        console.log(`   ✅ ${world.name}: ${itemsSaved} items processed${salesMsg}, ${worldStatsUpdated} stats updated`);
         worldProcessed = itemsSaved;
       } catch (error) {
         console.error(`   ✗ Error processing world ${world.name}:`, error);
@@ -455,7 +466,7 @@ async function main() {
 
     // Process worlds in parallel batches of 8 (Universalis allows 8 simultaneous connections)
     const PARALLEL_WORLDS = 8;
-    const worldBatches: typeof worlds[][] = [];
+    const worldBatches: World[][] = [];
     for (let i = 0; i < worlds.length; i += PARALLEL_WORLDS) {
       worldBatches.push(worlds.slice(i, i + PARALLEL_WORLDS));
     }
@@ -490,4 +501,5 @@ main().catch((error) => {
   console.error('Unhandled error:', error);
   process.exit(1);
 });
+
 
