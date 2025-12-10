@@ -43,7 +43,7 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_
 import { fetchMarketDataBatch, getPopularItemIds, getAllMarketableItemIds } from '../lib/universalis/client';
 import { upsertItem, upsertRecipe, getItem } from '../lib/db/items';
 import { getAllNAWorlds, getWorldByName, getWorldsByDataCenter } from '../lib/db/worlds';
-import { upsertMarketSales, upsertDailyStats } from '../lib/db/market-data';
+import { upsertMarketSales, upsertDailyStats, cleanupOldDailyStats, cleanupOldMarketSales } from '../lib/db/market-data';
 import { fetchItemData, fetchItemDataBatch, fetchRecipeData, fetchRecipeDataBatch } from '../lib/xivapi/client';
 import type { World } from '../lib/types/database';
 
@@ -56,6 +56,10 @@ const ITEM_BATCH_SIZE = 100; // Process items in batches to avoid overwhelming A
 // Raw sales are not used by the analytics dashboard (which only uses daily_item_stats)
 // Enable this if you need historical price charts or individual sale records
 const STORE_RAW_SALES = false; // Set to true to store individual sales in market_sales table
+
+// Data retention - delete data older than this many days
+// Analytics only needs 30 days max, but we keep 45 days as buffer
+const DATA_RETENTION_DAYS = 45;
 
 // Parse command-line arguments
 function parseArgs(): { limit?: number; skipRecipes?: boolean } {
@@ -485,6 +489,16 @@ async function main() {
       if (worldBatches.indexOf(worldBatch) < worldBatches.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
+    }
+
+    // Cleanup old data beyond retention period
+    console.log(`\n🧹 Cleaning up data older than ${DATA_RETENTION_DAYS} days...`);
+    const deletedStats = await cleanupOldDailyStats(DATA_RETENTION_DAYS);
+    console.log(`   Deleted ${deletedStats} old daily stats records`);
+    
+    if (STORE_RAW_SALES) {
+      const deletedSales = await cleanupOldMarketSales(DATA_RETENTION_DAYS);
+      console.log(`   Deleted ${deletedSales} old market sales records`);
     }
 
     console.log(`\n✅ Ingestion complete!`);

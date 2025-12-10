@@ -142,3 +142,51 @@ export async function getDailyStatsForTimeframe(
   return data || [];
 }
 
+/**
+ * Clean up old daily stats data beyond retention period
+ * Default retention: 45 days (gives buffer beyond 30-day analytics view)
+ * Returns number of rows deleted
+ */
+export async function cleanupOldDailyStats(retentionDays: number = 45): Promise<number> {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+  const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+
+  const { data, error } = await supabaseAdmin
+    .from('daily_item_stats')
+    .delete()
+    .lt('stat_date', cutoffDateStr)
+    .select('id');
+
+  if (error) {
+    console.error(`Failed to cleanup old daily stats: ${error.message}`);
+    return 0;
+  }
+
+  return data?.length || 0;
+}
+
+/**
+ * Clean up old market sales data beyond retention period
+ * Only needed if STORE_RAW_SALES is enabled
+ * Returns number of rows deleted
+ */
+export async function cleanupOldMarketSales(retentionDays: number = 45): Promise<number> {
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+  const cutoffDateStr = cutoffDate.toISOString();
+
+  const { data, error } = await supabaseAdmin
+    .from('market_sales')
+    .delete()
+    .lt('sale_timestamp', cutoffDateStr)
+    .select('id');
+
+  if (error) {
+    console.error(`Failed to cleanup old market sales: ${error.message}`);
+    return 0;
+  }
+
+  return data?.length || 0;
+}
+
