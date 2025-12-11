@@ -16,7 +16,6 @@ export default function Home() {
     categories: [],
     itemType: 'all',
     topN: 25,
-    rankingMetric: 'bestToSell',
   });
 
   const { isLoading, refetch } = useTopItems(filters);

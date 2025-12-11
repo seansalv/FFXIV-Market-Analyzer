@@ -9,7 +9,6 @@ export interface FilterState {
   categories: string[];
   itemType: 'all' | 'craftable' | 'non-craftable';
   topN: number;
-  rankingMetric: 'bestToSell' | 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
 }
 
 interface FilterPanelProps {
@@ -73,14 +72,6 @@ const CATEGORIES = [
   'Catalyst',
   'Miscellany',
   'Other',
-];
-
-const SORT_OPTIONS = [
-  { value: 'bestToSell', label: '⭐ Best to Sell', description: 'Highest daily gil potential (price × sales/day)' },
-  { value: 'revenue', label: '💰 Most Revenue', description: 'Items generating the most total gil' },
-  { value: 'volume', label: '📦 Fastest Selling', description: 'Items with highest sales volume' },
-  { value: 'profit', label: '📈 Best Profit', description: 'Highest profit per craft (craftable only)' },
-  { value: 'roi', label: '🎯 Best ROI %', description: 'Best return on investment (craftable only)' },
 ];
 
 const TOP_N_OPTIONS = [10, 25, 50, 100];
@@ -166,23 +157,6 @@ export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: F
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Sort By */}
-        <div>
-          <label className="text-sm text-slate-300 mb-2 block">Sort By</label>
-          <select
-            value={filters.rankingMetric}
-            onChange={(e) => onFilterChange({ rankingMetric: e.target.value as FilterState['rankingMetric'] })}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-          >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <p className="text-xs text-slate-500 mt-1">
-            {SORT_OPTIONS.find(o => o.value === filters.rankingMetric)?.description}
-          </p>
         </div>
 
         {/* Show Top N */}

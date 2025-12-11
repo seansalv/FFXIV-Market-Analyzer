@@ -33,9 +33,8 @@ export function useTopItems(params: FilterState) {
   if (params.topN !== undefined) {
     searchParams.set('topN', params.topN.toString());
   }
-  if (params.rankingMetric) {
-    searchParams.set('rankingMetric', params.rankingMetric);
-  }
+  // UI is locked to bestToSell for now
+  searchParams.set('rankingMetric', 'bestToSell');
 
   const url = `/api/top-items?${searchParams.toString()}`;
 
