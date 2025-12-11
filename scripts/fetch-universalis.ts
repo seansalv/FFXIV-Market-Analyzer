@@ -41,6 +41,7 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_
 }
 
 import { fetchMarketDataBatch, getPopularItemIds, getAllMarketableItemIds } from '../lib/universalis/client';
+import { supabaseAdmin } from '../lib/supabase/server';
 import { upsertItem, upsertRecipe, getItem } from '../lib/db/items';
 import { getAllNAWorlds, getWorldByName, getWorldsByDataCenter } from '../lib/db/worlds';
 import { upsertMarketSales, upsertDailyStats, cleanupOldDailyStats, cleanupOldMarketSales } from '../lib/db/market-data';
@@ -61,10 +62,25 @@ const STORE_RAW_SALES = false; // Set to true to store individual sales in marke
 // Analytics only needs 30 days max, but we keep 45 days as buffer
 const DATA_RETENTION_DAYS = 45;
 
+// Helper: lookup recipe row_id by itemId (ItemResult) via XIVAPI v2 search
+async function fetchRecipeIdForItem(itemId: number): Promise<number | null> {
+  try {
+    const url = `https://v2.xivapi.com/api/search?sheets=Recipe&fields=ID,ItemResult&query=ItemResult=${itemId}&limit=1`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const first = data?.results?.[0];
+    const recipeId = first?.row_id || first?.ID || null;
+    return recipeId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Parse command-line arguments
-function parseArgs(): { limit?: number; skipRecipes?: boolean } {
+function parseArgs(): { limit?: number; skipRecipes?: boolean; item?: number } {
   const args = process.argv.slice(2);
-  const result: { limit?: number; skipRecipes?: boolean } = {};
+  const result: { limit?: number; skipRecipes?: boolean; item?: number } = {};
   
   // Parse --limit flag
   const limitIndex = args.findIndex(arg => arg === '--limit' || arg === '-l');
@@ -75,6 +91,15 @@ function parseArgs(): { limit?: number; skipRecipes?: boolean } {
     }
   }
   
+  // Parse --item flag (single item ingest)
+  const itemIndex = args.findIndex(arg => arg === '--item');
+  if (itemIndex !== -1 && itemIndex + 1 < args.length) {
+    const itemValue = parseInt(args[itemIndex + 1], 10);
+    if (!isNaN(itemValue) && itemValue > 0) {
+      result.item = itemValue;
+    }
+  }
+
   // Parse --skip-recipes flag
   if (args.includes('--skip-recipes')) {
     result.skipRecipes = true;
@@ -84,7 +109,7 @@ function parseArgs(): { limit?: number; skipRecipes?: boolean } {
 }
 
 async function main() {
-  const { limit, skipRecipes } = parseArgs();
+  const { limit, skipRecipes, item } = parseArgs();
   
   console.log('🚀 Starting Universalis data ingestion...\n');
   if (limit) {
@@ -117,7 +142,10 @@ async function main() {
 
     // Get items to track
     let itemIds: number[];
-    if (USE_ALL_ITEMS) {
+    if (item && item > 0) {
+      console.log(`⚙️  Single-item ingest (--item): ${item}\n`);
+      itemIds = [item];
+    } else if (USE_ALL_ITEMS) {
       console.log('📋 Fetching all marketable items from Universalis...');
       itemIds = await getAllMarketableItemIds();
       console.log(`📦 Found ${itemIds.length} marketable items to track`);
@@ -171,11 +199,17 @@ async function main() {
           if (itemData) {
             // v2 API: nested objects are in fields property
             const categoryName = itemData.ItemUICategory?.fields?.Name || itemData.ItemKind?.fields?.Name || null;
-            const recipeId = itemData.Recipe?.row_id || itemData.Recipe?.value || null;
+            let recipeId = itemData.Recipe?.row_id || itemData.Recipe?.value || null;
+
+            // Fallback: if recipe not present on Item, try search by ItemResult for single-item ingest
+            if (!recipeId && itemIds.length === 1) {
+              recipeId = await fetchRecipeIdForItem(itemId);
+            }
             
             itemMetadata.set(itemId, {
               name: itemData.Name || itemId.toString(),
               category: categoryName,
+              // Use recipe presence OR later recipe table fallback
               isCraftable: !!recipeId,
               iconUrl: itemData.Icon ? `https://xivapi.com${itemData.Icon}` : null,
               recipeId: recipeId,
@@ -207,6 +241,44 @@ async function main() {
         }
       }
       
+      // Fallback: if any items in this batch still lack a recipeId, see if DB already has a recipe for them
+      const missingRecipeItems = batch.filter((id) => {
+        const meta = itemMetadata.get(id);
+        return meta && !meta.recipeId;
+      });
+      if (missingRecipeItems.length > 0) {
+        try {
+          // First, see if DB already has recipes for these items
+          const { data: existingRecipes } = await supabaseAdmin
+            .from('recipes')
+            .select('item_id')
+            .in('item_id', missingRecipeItems);
+          if (existingRecipes) {
+            for (const r of existingRecipes as Array<{ item_id: number }>) {
+              const meta = itemMetadata.get(r.item_id);
+              if (meta) {
+                meta.isCraftable = true;
+                // Keep recipeId null if we didn't fetch it here
+              }
+            }
+          }
+
+          // For remaining items with no recipe, try XIVAPI search (ItemResult= itemId)
+          // to discover the recipeId and mark craftable.
+          for (const id of missingRecipeItems) {
+            const meta = itemMetadata.get(id);
+            if (!meta || meta.recipeId) continue;
+            const recipeId = await fetchRecipeIdForItem(id);
+            if (recipeId) {
+              meta.isCraftable = true;
+              meta.recipeId = recipeId;
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
       // Insert items from this batch into database immediately
       // This ensures progress is saved even if script is interrupted
       for (const itemId of batch) {
@@ -214,17 +286,22 @@ async function main() {
         if (metadata) {
           try {
             const existingItem = await getItem(itemId);
+
+            // Never downgrade: if DB already says craftable, keep it true
+            const finalIsCraftable = existingItem?.is_craftable ? true : metadata.isCraftable;
+
             const shouldUpdate = !existingItem || 
               existingItem.name === itemId.toString() || 
               !existingItem.category ||
-              existingItem.name !== metadata.name;
+              existingItem.name !== metadata.name ||
+              existingItem.is_craftable !== finalIsCraftable;
 
             if (shouldUpdate) {
               await upsertItem({
                 id: itemId,
                 name: metadata.name,
                 category: metadata.category,
-                is_craftable: metadata.isCraftable,
+                is_craftable: finalIsCraftable,
                 icon_url: metadata.iconUrl,
               });
               if (existingItem) {

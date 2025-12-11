@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { FilterPanel } from '@/components/FilterPanel';
 import { MetricCards } from '@/components/MetricCards';
 import { ItemsTable } from '@/components/ItemsTable';
@@ -14,14 +14,9 @@ export default function Home() {
     worldOrDc: 'all-na',
     timeframe: '7d',
     categories: [],
-    craftableOnly: false,
-    nonCraftableOnly: false,
-    minSalesVelocity: 1,
-    minRevenue: 10000,
-    maxListings: null,
-    minPrice: 100,
+    itemType: 'all',
     topN: 25,
-    rankingMetric: 'revenue',
+    rankingMetric: 'bestToSell',
   });
 
   const { isLoading, refetch } = useTopItems(filters);
@@ -31,7 +26,6 @@ export default function Home() {
   };
 
   const handleAnalyze = () => {
-    // Trigger a refetch when user clicks analyze
     refetch();
   };
 
@@ -45,8 +39,8 @@ export default function Home() {
               <TrendingUp className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-white">FFXIV Market Profit Analyzer</h1>
-              <p className="text-slate-400 text-sm">Powered by Universalis API - NA Region</p>
+              <h1 className="text-white text-xl font-semibold">FFXIV Market Analyzer</h1>
+              <p className="text-slate-400 text-sm">Find the most profitable items to sell</p>
             </div>
           </div>
         </div>
@@ -78,4 +72,3 @@ export default function Home() {
     </div>
   );
 }
-

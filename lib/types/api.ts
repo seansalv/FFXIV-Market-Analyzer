@@ -3,7 +3,7 @@
  */
 
 export type Timeframe = '1d' | '7d' | '30d';
-export type RankingMetric = 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
+export type RankingMetric = 'bestToSell' | 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
 
 export interface TopItemsQueryParams {
   worldOrDc?: string;

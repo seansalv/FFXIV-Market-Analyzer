@@ -2,7 +2,8 @@
  * React hook for fetching top items from the API
  */
 import useSWR from 'swr';
-import type { TopItemsQueryParams, TopItemsResponse } from '../types/api';
+import type { TopItemsResponse } from '../types/api';
+import type { FilterState } from '@/components/FilterPanel';
 
 const fetcher = async (url: string): Promise<TopItemsResponse> => {
   const response = await fetch(url);
@@ -12,7 +13,7 @@ const fetcher = async (url: string): Promise<TopItemsResponse> => {
   return response.json();
 };
 
-export function useTopItems(params: TopItemsQueryParams) {
+export function useTopItems(params: FilterState) {
   // Build query string
   const searchParams = new URLSearchParams();
   
@@ -21,20 +22,14 @@ export function useTopItems(params: TopItemsQueryParams) {
   if (params.categories && params.categories.length > 0) {
     searchParams.set('categories', params.categories.join(','));
   }
-  if (params.craftableOnly) searchParams.set('craftableOnly', 'true');
-  if (params.nonCraftableOnly) searchParams.set('nonCraftableOnly', 'true');
-  if (params.minSalesVelocity !== undefined) {
-    searchParams.set('minSalesVelocity', params.minSalesVelocity.toString());
+  
+  // Convert itemType to craftableOnly/nonCraftableOnly for API compatibility
+  if (params.itemType === 'craftable') {
+    searchParams.set('craftableOnly', 'true');
+  } else if (params.itemType === 'non-craftable') {
+    searchParams.set('nonCraftableOnly', 'true');
   }
-  if (params.minRevenue !== undefined) {
-    searchParams.set('minRevenue', params.minRevenue.toString());
-  }
-  if (params.maxListings !== null && params.maxListings !== undefined) {
-    searchParams.set('maxListings', params.maxListings.toString());
-  }
-  if (params.minPrice !== undefined) {
-    searchParams.set('minPrice', params.minPrice.toString());
-  }
+  
   if (params.topN !== undefined) {
     searchParams.set('topN', params.topN.toString());
   }
@@ -50,7 +45,7 @@ export function useTopItems(params: TopItemsQueryParams) {
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: true,
-      dedupingInterval: 5000, // Cache for 5 seconds
+      dedupingInterval: 5000,
     }
   );
 
@@ -61,4 +56,3 @@ export function useTopItems(params: TopItemsQueryParams) {
     refetch: mutate,
   };
 }
-

@@ -7,14 +7,9 @@ export interface FilterState {
   worldOrDc: string;
   timeframe: '1d' | '7d' | '30d';
   categories: string[];
-  craftableOnly: boolean;
-  nonCraftableOnly: boolean;
-  minSalesVelocity: number;
-  minRevenue: number;
-  maxListings: number | null;
-  minPrice: number;
+  itemType: 'all' | 'craftable' | 'non-craftable';
   topN: number;
-  rankingMetric: 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
+  rankingMetric: 'bestToSell' | 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
 }
 
 interface FilterPanelProps {
@@ -65,31 +60,33 @@ const WORLDS = {
 };
 
 const CATEGORIES = [
-  'Consumables',
-  'Crafting Materials',
+  'Cloth',
+  'Leather',
+  'Bone',
+  'Metal',
+  'Stone',
+  'Reagent',
+  'Meal',
+  'Medicine',
   'Materia',
-  'Gear',
-  'Housing',
-  'Furnishings',
-  'Minions & Mounts',
-  'Dyes',
-  'Crystals & Clusters',
+  'Crystal',
+  'Catalyst',
+  'Miscellany',
   'Other',
 ];
 
-export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: FilterPanelProps) {
-  const [expandedSections, setExpandedSections] = useState({
-    location: true,
-    time: true,
-    categories: true,
-    craftable: true,
-    thresholds: true,
-    ranking: true,
-  });
+const SORT_OPTIONS = [
+  { value: 'bestToSell', label: '⭐ Best to Sell', description: 'Highest daily gil potential (price × sales/day)' },
+  { value: 'revenue', label: '💰 Most Revenue', description: 'Items generating the most total gil' },
+  { value: 'volume', label: '📦 Fastest Selling', description: 'Items with highest sales volume' },
+  { value: 'profit', label: '📈 Best Profit', description: 'Highest profit per craft (craftable only)' },
+  { value: 'roi', label: '🎯 Best ROI %', description: 'Best return on investment (craftable only)' },
+];
 
-  const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
+const TOP_N_OPTIONS = [10, 25, 50, 100];
+
+export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: FilterPanelProps) {
+  const [showCategories, setShowCategories] = useState(false);
 
   const toggleCategory = (category: string) => {
     const newCategories = filters.categories.includes(category)
@@ -104,211 +101,152 @@ export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: F
       <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-4 py-3 border-b border-slate-700">
         <div className="flex items-center gap-2">
           <Filter className="w-5 h-5 text-amber-500" />
-          <h2 className="text-white">Filters</h2>
+          <h2 className="text-white font-medium">Find Profitable Items</h2>
         </div>
       </div>
 
-      <div className="p-4 space-y-4 max-h-[calc(100vh-200px)] overflow-y-auto">
+      <div className="p-4 space-y-5">
         {/* World / Data Center */}
-        <FilterSection
-          title="Location"
-          expanded={expandedSections.location}
-          onToggle={() => toggleSection('location')}
-        >
+        <div>
+          <label className="text-sm text-slate-300 mb-2 block">Location</label>
           <select
             value={filters.worldOrDc}
             onChange={(e) => onFilterChange({ worldOrDc: e.target.value })}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
           >
             {Object.entries(WORLDS).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
-        </FilterSection>
+        </div>
 
         {/* Timeframe */}
-        <FilterSection
-          title="Timeframe"
-          expanded={expandedSections.time}
-          onToggle={() => toggleSection('time')}
-        >
+        <div>
+          <label className="text-sm text-slate-300 mb-2 block">Time Period</label>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { value: '1d', label: '1 Day' },
+              { value: '1d', label: '24 Hours' },
               { value: '7d', label: '7 Days' },
               { value: '30d', label: '30 Days' },
             ].map((option) => (
               <button
                 key={option.value}
                 onClick={() => onFilterChange({ timeframe: option.value as FilterState['timeframe'] })}
-                className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                className={`px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   filters.timeframe === option.value
                     ? 'bg-amber-500 text-white'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
                 }`}
               >
                 {option.label}
               </button>
             ))}
           </div>
-        </FilterSection>
+        </div>
 
-        {/* Categories */}
-        <FilterSection
-          title="Item Categories"
-          expanded={expandedSections.categories}
-          onToggle={() => toggleSection('categories')}
-        >
-          <div className="space-y-2">
-            <button
-              onClick={() => onFilterChange({ categories: [] })}
-              className="text-xs text-amber-500 hover:text-amber-400 underline"
-            >
-              Clear All
-            </button>
-            {CATEGORIES.map((category) => (
-              <label key={category} className="flex items-center gap-2 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={filters.categories.includes(category)}
-                  onChange={() => toggleCategory(category)}
-                  className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-900"
-                />
-                <span className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                  {category}
-                </span>
-              </label>
+        {/* Item Type (craftable vs non-craftable) */}
+        <div>
+          <label className="text-sm text-slate-300 mb-2 block">Item Type</label>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { value: 'all', label: 'All' },
+              { value: 'craftable', label: 'Craftable' },
+              { value: 'non-craftable', label: 'Other' },
+            ].map((option) => (
+              <button
+                key={option.value}
+                onClick={() => onFilterChange({ itemType: option.value as FilterState['itemType'] })}
+                className={`px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  filters.itemType === option.value
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+                }`}
+              >
+                {option.label}
+              </button>
             ))}
           </div>
-        </FilterSection>
+        </div>
 
-        {/* Craftable Status */}
-        <FilterSection
-          title="Craftable Status"
-          expanded={expandedSections.craftable}
-          onToggle={() => toggleSection('craftable')}
-        >
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={filters.craftableOnly}
-                onChange={(e) => onFilterChange({ 
-                  craftableOnly: e.target.checked,
-                  nonCraftableOnly: e.target.checked ? false : filters.nonCraftableOnly
-                })}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-900"
-              />
-              <span className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                Craftable Items Only
-              </span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={filters.nonCraftableOnly}
-                onChange={(e) => onFilterChange({ 
-                  nonCraftableOnly: e.target.checked,
-                  craftableOnly: e.target.checked ? false : filters.craftableOnly
-                })}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-900"
-              />
-              <span className="text-sm text-slate-300 group-hover:text-white transition-colors">
-                Non-Craftable Items Only
-              </span>
-            </label>
-          </div>
-        </FilterSection>
+        {/* Sort By */}
+        <div>
+          <label className="text-sm text-slate-300 mb-2 block">Sort By</label>
+          <select
+            value={filters.rankingMetric}
+            onChange={(e) => onFilterChange({ rankingMetric: e.target.value as FilterState['rankingMetric'] })}
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <p className="text-xs text-slate-500 mt-1">
+            {SORT_OPTIONS.find(o => o.value === filters.rankingMetric)?.description}
+          </p>
+        </div>
 
-        {/* Thresholds */}
-        <FilterSection
-          title="Thresholds"
-          expanded={expandedSections.thresholds}
-          onToggle={() => toggleSection('thresholds')}
-        >
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Min Sales Velocity (units/day)</label>
-              <input
-                type="number"
-                value={filters.minSalesVelocity}
-                onChange={(e) => onFilterChange({ minSalesVelocity: Number(e.target.value) })}
-                min="0"
-                step="0.1"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Min Revenue (gil)</label>
-              <input
-                type="number"
-                value={filters.minRevenue}
-                onChange={(e) => onFilterChange({ minRevenue: Number(e.target.value) })}
-                min="0"
-                step="1000"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Max Listings (optional)</label>
-              <input
-                type="number"
-                value={filters.maxListings ?? ''}
-                onChange={(e) => onFilterChange({ maxListings: e.target.value ? Number(e.target.value) : null })}
-                min="0"
-                placeholder="No limit"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Min Price (gil)</label>
-              <input
-                type="number"
-                value={filters.minPrice}
-                onChange={(e) => onFilterChange({ minPrice: Number(e.target.value) })}
-                min="0"
-                step="100"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-          </div>
-        </FilterSection>
-
-        {/* Ranking */}
-        <FilterSection
-          title="Ranking & Display"
-          expanded={expandedSections.ranking}
-          onToggle={() => toggleSection('ranking')}
-        >
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Rank By</label>
-              <select
-                value={filters.rankingMetric}
-                onChange={(e) => onFilterChange({ rankingMetric: e.target.value as FilterState['rankingMetric'] })}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+        {/* Show Top N */}
+        <div>
+          <label className="text-sm text-slate-300 mb-2 block">Show Top</label>
+          <div className="grid grid-cols-4 gap-2">
+            {TOP_N_OPTIONS.map((n) => (
+              <button
+                key={n}
+                onClick={() => onFilterChange({ topN: n })}
+                className={`px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  filters.topN === n
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+                }`}
               >
-                <option value="revenue">Total Revenue</option>
-                <option value="volume">Units Sold</option>
-                <option value="avgPrice">Average Price</option>
-                <option value="profit">Profit per Unit</option>
-                <option value="roi">ROI / Margin %</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Show Top N Items</label>
-              <input
-                type="number"
-                value={filters.topN}
-                onChange={(e) => onFilterChange({ topN: Number(e.target.value) })}
-                min="5"
-                max="100"
-                step="5"
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
+                {n}
+              </button>
+            ))}
           </div>
-        </FilterSection>
+        </div>
+
+        {/* Categories (collapsible, optional) */}
+        <div className="border border-slate-800 rounded-lg overflow-hidden">
+          <button
+            onClick={() => setShowCategories(!showCategories)}
+            className="w-full px-3 py-2.5 bg-slate-800/50 hover:bg-slate-800 flex items-center justify-between transition-colors"
+          >
+            <span className="text-sm text-slate-300">
+              Filter by Category
+              {filters.categories.length > 0 && (
+                <span className="ml-2 text-amber-500">({filters.categories.length} selected)</span>
+              )}
+            </span>
+            <ChevronDown
+              className={`w-4 h-4 text-slate-400 transition-transform ${showCategories ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {showCategories && (
+            <div className="p-3 bg-slate-900/50 space-y-2">
+              <button
+                onClick={() => onFilterChange({ categories: [] })}
+                className="text-xs text-amber-500 hover:text-amber-400 underline"
+              >
+                Clear All
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                {CATEGORIES.map((category) => (
+                  <label key={category} className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={filters.categories.includes(category)}
+                      onChange={() => toggleCategory(category)}
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-slate-900"
+                    />
+                    <span className="text-xs text-slate-300 group-hover:text-white transition-colors">
+                      {category}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Analyze Button */}
@@ -316,7 +254,7 @@ export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: F
         <button
           onClick={onAnalyze}
           disabled={isLoading}
-          className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 disabled:from-slate-700 disabled:to-slate-800 disabled:cursor-not-allowed text-white py-3 rounded-lg flex items-center justify-center gap-2 transition-all"
+          className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 disabled:from-slate-700 disabled:to-slate-800 disabled:cursor-not-allowed text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 transition-all"
         >
           {isLoading ? (
             <>
@@ -326,7 +264,7 @@ export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: F
           ) : (
             <>
               <Play className="w-5 h-5" />
-              <span>Run Analysis</span>
+              <span>Find Best Items</span>
             </>
           )}
         </button>
@@ -334,34 +272,3 @@ export function FilterPanel({ filters, onFilterChange, onAnalyze, isLoading }: F
     </div>
   );
 }
-
-interface FilterSectionProps {
-  title: string;
-  expanded: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}
-
-function FilterSection({ title, expanded, onToggle, children }: FilterSectionProps) {
-  return (
-    <div className="border border-slate-800 rounded-lg overflow-hidden">
-      <button
-        onClick={onToggle}
-        className="w-full px-3 py-2 bg-slate-800/50 hover:bg-slate-800 flex items-center justify-between transition-colors"
-      >
-        <span className="text-sm text-white">{title}</span>
-        <ChevronDown
-          className={`w-4 h-4 text-slate-400 transition-transform ${
-            expanded ? 'rotate-180' : ''
-          }`}
-        />
-      </button>
-      {expanded && (
-        <div className="p-3 bg-slate-900/50">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-

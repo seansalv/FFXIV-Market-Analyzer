@@ -130,7 +130,7 @@ export interface XIVAPIRecipe {
  */
 export async function fetchItemData(itemId: number): Promise<XIVAPIItem | null> {
   try {
-    const url = `${BASE_URL}/sheet/Item/${itemId}?fields=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe.ID,ClassJobCategory.Name&language=en`;
+    const url = `${BASE_URL}/sheet/Item/${itemId}?fields=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe,ClassJobCategory.Name&language=en`;
     const response = await rateLimitedFetch(url);
     const data: XIVAPIv2Response<XIVAPIItem> = await response.json();
     
@@ -161,7 +161,7 @@ export async function fetchItemDataBatch(itemIds: number[]): Promise<Map<number,
   try {
     // Build comma-separated list of item IDs
     const rowsParam = itemIds.join(',');
-    const url = `${BASE_URL}/sheet/Item?rows=${rowsParam}&fields=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe.ID,ClassJobCategory.Name&language=en`;
+    const url = `${BASE_URL}/sheet/Item?rows=${rowsParam}&fields=ID,Name,ItemKind.Name,ItemUICategory.Name,Icon,Recipe,ClassJobCategory.Name&language=en`;
     
     const response = await rateLimitedFetch(url);
     const data = await response.json();
@@ -194,7 +194,7 @@ export async function fetchItemDataBatch(itemIds: number[]): Promise<Map<number,
  */
 export async function fetchRecipeData(recipeId: number): Promise<XIVAPIRecipe | null> {
   try {
-    const url = `${BASE_URL}/sheet/Recipe/${recipeId}?fields=ID,ItemResult.ID,ItemResult.Name,AmountResult,Ingredients.ItemIngredient.ID,Ingredients.ItemIngredient.Name,Ingredients.AmountIngredient&language=en`;
+    const url = `${BASE_URL}/sheet/Recipe/${recipeId}?fields=ID,ItemResult,AmountResult,Ingredients.ItemIngredient,Ingredients.AmountIngredient&language=en`;
     const response = await rateLimitedFetch(url);
     const data: XIVAPIv2Response<XIVAPIRecipe> = await response.json();
     
@@ -224,7 +224,7 @@ export async function fetchRecipeDataBatch(recipeIds: number[]): Promise<Map<num
   
   try {
     const rowsParam = recipeIds.join(',');
-    const url = `${BASE_URL}/sheet/Recipe?rows=${rowsParam}&fields=ID,ItemResult.ID,ItemResult.Name,AmountResult,Ingredients.ItemIngredient.ID,Ingredients.ItemIngredient.Name,Ingredients.AmountIngredient&language=en`;
+    const url = `${BASE_URL}/sheet/Recipe?rows=${rowsParam}&fields=ID,ItemResult,AmountResult,Ingredients.ItemIngredient,Ingredients.AmountIngredient&language=en`;
     
     const response = await rateLimitedFetch(url);
     const data = await response.json();

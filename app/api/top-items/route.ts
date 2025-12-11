@@ -28,7 +28,7 @@ const querySchema = z.object({
   maxListings: z.string().optional().transform((val) => (val ? parseInt(val, 10) : null)),
   minPrice: z.string().optional().transform((val) => (val ? parseInt(val, 10) : undefined)),
   topN: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 25)),
-  rankingMetric: z.enum(['revenue', 'volume', 'avgPrice', 'profit', 'roi']).optional().default('revenue'),
+  rankingMetric: z.enum(['bestToSell', 'revenue', 'volume', 'avgPrice', 'profit', 'roi']).optional().default('bestToSell'),
 });
 
 export async function GET(request: NextRequest) {
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
 
     const params = querySchema.parse(rawParams) as TopItemsQueryParams & {
       topN: number;
-      rankingMetric: 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
+      rankingMetric: 'bestToSell' | 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
       timeframe: Timeframe;
     };
 
@@ -83,6 +83,12 @@ export async function GET(request: NextRequest) {
 
     // OPTIMIZED: Single query with JOINs - fetch stats, items, and recipes together
     // This replaces multiple queries and per-item recipe lookups
+    // NOTE: We filter for units_sold > 0 to reduce data size and only show items with sales.
+    // Limits are tuned per mode to avoid timeouts but keep enough rows.
+    // Allow a wider window now so more items appear in results.
+    const QUERY_LIMIT = 50000;
+    // Allow cheaper items into the query to avoid over-filtering (still filtered later for bestToSell)
+    const MIN_PRICE_DB = 50; // apply the same low floor to all to include cheap consumables
     let query = supabaseAdmin
       .from('daily_item_stats')
       .select(`
@@ -98,7 +104,11 @@ export async function GET(request: NextRequest) {
         worlds!inner(id, name, data_center)
       `)
       .in('world_id', worldIds)
-      .gte('stat_date', cutoffDateStr);
+      .gte('stat_date', cutoffDateStr)
+      .gt('units_sold', 0) // Only include records with actual sales
+      .gt('avg_price', MIN_PRICE_DB) // Skip ultra-cheap items; lower floor for craftables
+      .order('total_revenue', { ascending: false }) // Prioritize high-revenue records
+      .limit(QUERY_LIMIT); // Keep query responsive; filters run before this limit
 
     // Apply category filter at DB level if specified
     if (params.categories && params.categories.length > 0) {
@@ -268,22 +278,73 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // For "bestToSell" ranking, filter out items that aren't practical to sell
+    // This prevents showing low-value items like crystals that need thousands of sales
+    let filteredItems = itemsWithMetrics;
+    if (params.rankingMetric === 'bestToSell') {
+      // Filters:
+      // - Minimum price: keep modest to allow food/potions/consumables
+      const minPriceBestToSell = 200;
+      // - Minimum velocity: relaxed to 0.2/day (~6 per month) to avoid over-pruning
+      // - Must have actual sales and revenue
+      filteredItems = itemsWithMetrics.filter(item => 
+        item.unitsSold > 0 && 
+        item.totalRevenue > 0 && 
+        item.salesVelocity >= 0.2 &&
+        item.avgPrice >= minPriceBestToSell // Allow cheaper items, still block shards/crystals
+      );
+      
+      // If we filtered out everything, try without price filter
+      if (filteredItems.length === 0) {
+        filteredItems = itemsWithMetrics.filter(item => 
+          item.unitsSold > 0 && item.totalRevenue > 0 && item.salesVelocity >= 0.5
+        );
+      }
+      
+      // If still nothing, fall back to items with any sales
+      if (filteredItems.length === 0) {
+        filteredItems = itemsWithMetrics.filter(item => 
+          item.unitsSold > 0 && item.totalRevenue > 0
+        );
+      }
+      
+      // Last resort: all items
+      if (filteredItems.length === 0) {
+        filteredItems = itemsWithMetrics;
+      }
+    }
+
     // Sort by ranking metric
-    const getRankingValue = (item: typeof itemsWithMetrics[0]): number => {
+    const getRankingValue = (item: typeof filteredItems[0]): number => {
       switch (params.rankingMetric) {
+        case 'bestToSell':
+          // "Daily Gil Potential" = avgPrice × salesVelocity
+          // This represents how much gil you can expect to make per day selling this item
+          // Example: Item selling 10x/day at 100K = 1M gil/day potential
+          // 
+          // We also add a reliability bonus for faster-selling items
+          const dailyGilPotential = item.avgPrice * item.salesVelocity;
+          
+          // Reliability multiplier: items selling faster get higher weight
+          const reliabilityBonus = item.salesVelocity >= 5 ? 1.8 :
+                                   item.salesVelocity >= 1 ? 1.5 :
+                                   item.salesVelocity >= 0.5 ? 1.2 : 1.0;
+          
+          return dailyGilPotential * reliabilityBonus;
+          
         case 'revenue': return item.totalRevenue;
         case 'volume': return item.unitsSold;
         case 'avgPrice': return item.avgPrice;
-        case 'profit': return item.profitPerUnit ?? -Infinity;
-        case 'roi': return item.marginPercent ?? -Infinity;
+        case 'profit': return item.profitPerUnit ?? 0;
+        case 'roi': return item.marginPercent ?? 0;
         default: return item.totalRevenue;
       }
     };
 
-    itemsWithMetrics.sort((a, b) => getRankingValue(b) - getRankingValue(a));
+    filteredItems.sort((a, b) => getRankingValue(b) - getRankingValue(a));
 
     // Take top N
-    const topItems = itemsWithMetrics.slice(0, params.topN);
+    const topItems = filteredItems.slice(0, params.topN);
 
     // Convert to API response format
     const marketItems: MarketItem[] = topItems.map((item) => ({
@@ -304,17 +365,17 @@ export async function GET(request: NextRequest) {
       activeListings: item.activeListings,
     }));
 
-    // Calculate aggregate metrics
-    const totalItems = itemsWithMetrics.length;
-    const totalRevenue = itemsWithMetrics.reduce((sum, item) => sum + item.totalRevenue, 0);
-    const itemsWithProfit = itemsWithMetrics.filter((item) => item.profitPerUnit !== null);
+    // Calculate aggregate metrics (based on filtered items that match criteria)
+    const totalItems = filteredItems.length;
+    const totalRevenue = filteredItems.reduce((sum, item) => sum + item.totalRevenue, 0);
+    const itemsWithProfit = filteredItems.filter((item) => item.profitPerUnit !== null);
     const avgProfitMargin =
       itemsWithProfit.length > 0
         ? itemsWithProfit.reduce((sum, item) => sum + (item.marginPercent ?? 0), 0) / itemsWithProfit.length
         : 0;
     const avgSalesVelocity =
-      itemsWithMetrics.length > 0
-        ? itemsWithMetrics.reduce((sum, item) => sum + item.salesVelocity, 0) / itemsWithMetrics.length
+      filteredItems.length > 0
+        ? filteredItems.reduce((sum, item) => sum + item.salesVelocity, 0) / filteredItems.length
         : 0;
 
     const response: TopItemsResponse = {
