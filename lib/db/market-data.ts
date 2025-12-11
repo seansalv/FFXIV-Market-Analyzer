@@ -5,6 +5,30 @@ import { supabaseAdmin } from '../supabase/server';
 import type { MarketSale, DailyItemStats } from '../types/database';
 import type { UniversalisMarketData, UniversalisHistoryEntry } from '../types/api';
 
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+function quartiles(values: number[]): { q1: number; q3: number } {
+  if (values.length === 0) return { q1: 0, q3: 0 };
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const lower = sorted.slice(0, mid);
+  const upper = sorted.length % 2 === 0 ? sorted.slice(mid) : sorted.slice(mid + 1);
+  return { q1: median(lower), q3: median(upper) };
+}
+
+function mad(values: number[], med: number): number {
+  if (values.length === 0) return 0;
+  const deviations = values.map((v) => Math.abs(v - med));
+  return median(deviations);
+}
+
 /**
  * Insert or update market sales from Universalis history
  */
@@ -87,6 +111,55 @@ export async function upsertDailyStats(
     0
   );
 
+  // --- Robust stats (RMT-resistant) ---
+  const priceMedian = median(prices);
+  const { q1, q3 } = quartiles(prices);
+  const iqr = q3 - q1;
+  const dailyMad = mad(prices, priceMedian);
+  const hasEnoughSales = recentHistory.length >= 5;
+
+  // Anchor: until we maintain rolling anchors, use daily median as a temporary anchor
+  const anchor = priceMedian > 0 ? priceMedian : null;
+  const anchorUpper = anchor ? anchor * 20 : Infinity; // obvious RMT guard
+
+  const filteredSales = recentHistory.filter((entry) => {
+    const p = entry.pricePerUnit;
+
+    // Obvious outlier vs anchor
+    if (p > anchorUpper) return false;
+
+    if (hasEnoughSales) {
+      const iqrUpper = q3 + 3 * iqr;
+      const madUpper = dailyMad > 0 ? priceMedian + 6 * dailyMad : Infinity;
+      if (p > Math.min(iqrUpper, madUpper)) return false;
+    }
+
+    // Qty=1 guard only for cheap items
+    const isLikelyCheap = anchor !== null && anchor < 1000;
+    if (isLikelyCheap && entry.quantity === 1 && p > q3 * 20) return false;
+
+    return true;
+  });
+
+  // Clamp remaining prices so a single sale cannot dominate
+  const clampBase = anchor ?? priceMedian;
+  const clampCap = clampBase > 0 ? clampBase * 10 : Infinity;
+  const clampedSales = filteredSales.map((s) => ({
+    ...s,
+    pricePerUnit: clampCap !== Infinity ? Math.min(s.pricePerUnit, clampCap) : s.pricePerUnit,
+  }));
+
+  const robustSampleSize = clampedSales.length;
+  const robustUnitsSold = clampedSales.reduce((sum, entry) => sum + entry.quantity, 0);
+  const robustTotalRevenue = clampedSales.reduce(
+    (sum, entry) => sum + entry.pricePerUnit * entry.quantity,
+    0
+  );
+  const robustPrices = clampedSales.map((e) => e.pricePerUnit);
+  const robustAvgPrice =
+    robustPrices.length > 0 ? Math.round(median(robustPrices)) : null;
+  const isLowConfidence = robustSampleSize < 5;
+
   const { error } = await supabaseAdmin
     .from('daily_item_stats')
     .upsert(
@@ -101,6 +174,14 @@ export async function upsertDailyStats(
         max_price: maxPrice,
         active_listings: activeListings,
         total_listings_quantity: totalListingsQuantity,
+        robust_avg_price: robustAvgPrice,
+        robust_total_revenue: robustTotalRevenue,
+        robust_units_sold: robustUnitsSold,
+        robust_sample_size: robustSampleSize,
+        // Anchors will be populated once we maintain rolling history; using null placeholder for now
+        typical_price_30d: null,
+        price_p90_30d: null,
+        is_low_confidence: isLowConfidence,
         updated_at: new Date().toISOString(),
       },
       {
