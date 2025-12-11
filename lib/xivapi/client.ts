@@ -166,18 +166,17 @@ export async function fetchItemDataBatch(itemIds: number[]): Promise<Map<number,
     const response = await rateLimitedFetch(url);
     const data = await response.json();
     
-    // v2 batch endpoint returns an array of row objects
-    // Each row has: { schema, version, row_id, fields: {...} }
-    if (Array.isArray(data)) {
-      for (const row of data) {
+    // v2 batch endpoint returns: { schema, version, rows: [{ row_id, fields }, ...] }
+    if (data.rows && Array.isArray(data.rows)) {
+      for (const row of data.rows) {
         if (row.fields && row.row_id) {
           result.set(row.row_id, row.fields as XIVAPIItem);
         }
       }
-    } else if (data.fields && Array.isArray(data.fields)) {
-      // Alternative response format: { fields: [...] }
-      for (const row of data.fields) {
-        if (row.row_id && row.fields) {
+    } else if (Array.isArray(data)) {
+      // Fallback: direct array format
+      for (const row of data) {
+        if (row.fields && row.row_id) {
           result.set(row.row_id, row.fields as XIVAPIItem);
         }
       }
@@ -230,16 +229,17 @@ export async function fetchRecipeDataBatch(recipeIds: number[]): Promise<Map<num
     const response = await rateLimitedFetch(url);
     const data = await response.json();
     
-    // v2 batch endpoint returns an array of row objects
-    if (Array.isArray(data)) {
-      for (const row of data) {
+    // v2 batch endpoint returns: { schema, version, rows: [{ row_id, fields }, ...] }
+    if (data.rows && Array.isArray(data.rows)) {
+      for (const row of data.rows) {
         if (row.fields && row.row_id) {
           result.set(row.row_id, row.fields as XIVAPIRecipe);
         }
       }
-    } else if (data.fields && Array.isArray(data.fields)) {
-      for (const row of data.fields) {
-        if (row.row_id && row.fields) {
+    } else if (Array.isArray(data)) {
+      // Fallback: direct array format
+      for (const row of data) {
+        if (row.fields && row.row_id) {
           result.set(row.row_id, row.fields as XIVAPIRecipe);
         }
       }
