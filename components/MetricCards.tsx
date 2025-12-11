@@ -23,7 +23,6 @@ export function MetricCards({ filters }: MetricCardsProps) {
   const metrics = data?.metrics || {
     totalItems: 0,
     totalRevenue: 0,
-    avgProfitMargin: 0,
     avgSalesVelocity: 0,
   };
 
@@ -39,12 +38,6 @@ export function MetricCards({ filters }: MetricCardsProps) {
       label: 'Total Revenue',
       value: `${formatGil(metrics.totalRevenue)} gil`,
       color: 'from-amber-500 to-orange-600',
-    },
-    {
-      icon: TrendingUp,
-      label: 'Avg Profit Margin',
-      value: `${metrics.avgProfitMargin.toFixed(1)}%`,
-      color: 'from-green-500 to-emerald-600',
     },
     {
       icon: Activity,

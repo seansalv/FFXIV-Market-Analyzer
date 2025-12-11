@@ -289,8 +289,6 @@ export async function GET(request: NextRequest) {
       avgPrice: number;
       minPrice: number | null;
       maxPrice: number | null;
-      profitPerUnit: number | null;
-      marginPercent: number | null;
       activeListings: number;
       anchorPrice: number | null;
     }> = [];
@@ -298,15 +296,6 @@ export async function GET(request: NextRequest) {
     for (const [, agg] of aggregatedItems) {
       const avgPrice = agg.priceCount > 0 ? Math.round(agg.priceSum / agg.priceCount) : 0;
       const salesVelocity = agg.totalUnitsSold / days;
-      
-      // Calculate profit metrics
-      let profitPerUnit: number | null = null;
-      let marginPercent: number | null = null;
-      
-      if (agg.materialCost && agg.materialCost > 0 && avgPrice > 0) {
-        profitPerUnit = avgPrice - agg.materialCost;
-        marginPercent = (profitPerUnit / avgPrice) * 100;
-      }
 
       // Apply threshold filters
       if (params.minSalesVelocity && salesVelocity < params.minSalesVelocity) continue;
@@ -327,8 +316,6 @@ export async function GET(request: NextRequest) {
         avgPrice,
         minPrice: agg.minPrice,
         maxPrice: agg.maxPrice,
-        profitPerUnit,
-        marginPercent,
         activeListings: agg.latestActiveListings,
         anchorPrice: agg.anchorPrice,
       });
@@ -437,8 +424,8 @@ export async function GET(request: NextRequest) {
         case 'revenue': return item.totalRevenue;
         case 'volume': return item.unitsSold;
         case 'avgPrice': return item.avgPrice;
-        case 'profit': return item.profitPerUnit ?? 0;
-        case 'roi': return item.marginPercent ?? 0;
+        case 'profit': return 0;
+        case 'roi': return 0;
         default: return item.totalRevenue;
       }
     };
@@ -462,19 +449,12 @@ export async function GET(request: NextRequest) {
       avgPrice: item.avgPrice,
       minPrice: item.minPrice,
       maxPrice: item.maxPrice,
-      profitPerUnit: item.profitPerUnit,
-      marginPercent: item.marginPercent,
       activeListings: item.activeListings,
     }));
 
     // Calculate aggregate metrics (based on filtered items that match criteria)
     const totalItems = filteredItems.length;
     const totalRevenue = filteredItems.reduce((sum, item) => sum + item.totalRevenue, 0);
-    const itemsWithProfit = filteredItems.filter((item) => item.profitPerUnit !== null);
-    const avgProfitMargin =
-      itemsWithProfit.length > 0
-        ? itemsWithProfit.reduce((sum, item) => sum + (item.marginPercent ?? 0), 0) / itemsWithProfit.length
-        : 0;
     const avgSalesVelocity =
       filteredItems.length > 0
         ? filteredItems.reduce((sum, item) => sum + item.salesVelocity, 0) / filteredItems.length
@@ -486,7 +466,6 @@ export async function GET(request: NextRequest) {
       metrics: {
         totalItems,
         totalRevenue,
-        avgProfitMargin,
         avgSalesVelocity,
       },
     };

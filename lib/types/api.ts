@@ -34,8 +34,6 @@ export interface MarketItem {
   avgPrice: number;
   minPrice: number | null;
   maxPrice: number | null;
-  profitPerUnit: number | null;
-  marginPercent: number | null;
   activeListings: number;
 }
 
@@ -45,7 +43,6 @@ export interface TopItemsResponse {
   metrics: {
     totalItems: number;
     totalRevenue: number;
-    avgProfitMargin: number;
     avgSalesVelocity: number;
   };
 }

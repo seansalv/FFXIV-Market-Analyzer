@@ -18,7 +18,7 @@ interface ItemsTableProps {
   isLoading: boolean;
 }
 
-type SortField = 'name' | 'unitsSold' | 'salesVelocity' | 'totalRevenue' | 'avgPrice' | 'profitPerUnit' | 'marginPercent';
+type SortField = 'name' | 'unitsSold' | 'salesVelocity' | 'totalRevenue' | 'avgPrice';
 type SortDirection = 'asc' | 'desc';
 
 export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTableProps) {
@@ -57,20 +57,21 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
     }
   }) : [];
 
-  const formatGil = (amount: number): string => {
+  const formatGil = (amount: number | undefined | null): string => {
+    const safe = typeof amount === 'number' && Number.isFinite(amount) ? amount : 0;
     if (amount >= 1000000) {
-      return `${(amount / 1000000).toFixed(2)}M`;
+      return `${(safe / 1000000).toFixed(2)}M`;
     } else if (amount >= 1000) {
-      return `${(amount / 1000).toFixed(1)}K`;
+      return `${(safe / 1000).toFixed(1)}K`;
     }
-    return amount.toLocaleString();
+    return safe.toLocaleString();
   };
 
   const handleExport = () => {
     if (!data?.items) return;
 
     const csv = [
-      ['Item', 'World', 'Units Sold', 'Sales Velocity', 'Revenue', 'Avg Price', 'Profit/Unit', 'Margin %', 'Listings'],
+      ['Item', 'World', 'Units Sold', 'Sales Velocity', 'Revenue', 'Avg Price', 'Listings'],
       ...data.items.map(item => [
         item.name,
         item.world,
@@ -78,8 +79,6 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
         item.salesVelocity.toFixed(1),
         item.totalRevenue.toString(),
         item.avgPrice.toString(),
-        item.profitPerUnit?.toString() || 'N/A',
-        item.marginPercent?.toFixed(1) || 'N/A',
         item.activeListings.toString(),
       ])
     ].map(row => row.join(',')).join('\n');
@@ -207,24 +206,6 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
                   <SortIcon field="avgPrice" />
                 </button>
               </th>
-              <th className="px-4 py-3 text-right">
-                <button
-                  onClick={() => handleSort('profitPerUnit')}
-                  className="flex items-center gap-2 ml-auto text-sm text-slate-300 hover:text-white transition-colors"
-                >
-                  <span>Profit/Unit</span>
-                  <SortIcon field="profitPerUnit" />
-                </button>
-              </th>
-              <th className="px-4 py-3 text-right">
-                <button
-                  onClick={() => handleSort('marginPercent')}
-                  className="flex items-center gap-2 ml-auto text-sm text-slate-300 hover:text-white transition-colors"
-                >
-                  <span>Margin %</span>
-                  <SortIcon field="marginPercent" />
-                </button>
-              </th>
               <th className="px-4 py-3 text-center">
                 <span className="text-sm text-slate-300">Actions</span>
               </th>
@@ -275,22 +256,6 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
                       <p className="text-slate-400 text-xs">{formatGil(item.minPrice)} - {formatGil(item.maxPrice)}</p>
                     )}
                   </div>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {item.profitPerUnit !== null ? (
-                    <span className="text-green-500">+{formatGil(item.profitPerUnit)}</span>
-                  ) : (
-                    <span className="text-slate-500">N/A</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {item.marginPercent !== null ? (
-                    <span className={`${item.marginPercent >= 30 ? 'text-green-500' : item.marginPercent >= 15 ? 'text-yellow-500' : 'text-orange-500'}`}>
-                      {item.marginPercent.toFixed(1)}%
-                    </span>
-                  ) : (
-                    <span className="text-slate-500">N/A</span>
-                  )}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-center gap-2">
