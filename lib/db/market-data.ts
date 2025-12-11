@@ -29,6 +29,16 @@ function mad(values: number[], med: number): number {
   return median(deviations);
 }
 
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = (sorted.length - 1) * p;
+  const lower = Math.floor(idx);
+  const upper = Math.ceil(idx);
+  if (upper === lower) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (idx - lower);
+}
+
 /**
  * Insert or update market sales from Universalis history
  */
@@ -111,6 +121,32 @@ export async function upsertDailyStats(
     0
   );
 
+  // --- Rolling anchors (30d) ---
+  let anchorMedian: number | null = null;
+  let anchorP90: number | null = null;
+  try {
+    const { data: anchorRows } = await supabaseAdmin
+      .from('daily_item_stats')
+      .select('avg_price, robust_avg_price, stat_date')
+      .eq('item_id', itemId)
+      .eq('world_id', worldId)
+      .lt('stat_date', statDate)
+      .order('stat_date', { ascending: false })
+      .limit(30);
+
+    if (anchorRows && anchorRows.length > 0) {
+      const anchorPrices = anchorRows
+        .map((r: any) => r.robust_avg_price ?? r.avg_price)
+        .filter((p: any) => typeof p === 'number' && p > 0) as number[];
+      if (anchorPrices.length > 0) {
+        anchorMedian = median(anchorPrices);
+        anchorP90 = percentile(anchorPrices, 0.9);
+      }
+    }
+  } catch {
+    // If anchor lookup fails, fall back to daily stats only
+  }
+
   // --- Robust stats (RMT-resistant) ---
   const priceMedian = median(prices);
   const { q1, q3 } = quartiles(prices);
@@ -118,8 +154,8 @@ export async function upsertDailyStats(
   const dailyMad = mad(prices, priceMedian);
   const hasEnoughSales = recentHistory.length >= 5;
 
-  // Anchor: until we maintain rolling anchors, use daily median as a temporary anchor
-  const anchor = priceMedian > 0 ? priceMedian : null;
+  // Anchor: prefer rolling 30d median, fallback to today's median
+  const anchor = anchorMedian ?? (priceMedian > 0 ? priceMedian : null);
   const anchorUpper = anchor ? anchor * 20 : Infinity; // obvious RMT guard
 
   const filteredSales = recentHistory.filter((entry) => {
@@ -178,9 +214,8 @@ export async function upsertDailyStats(
         robust_total_revenue: robustTotalRevenue,
         robust_units_sold: robustUnitsSold,
         robust_sample_size: robustSampleSize,
-        // Anchors will be populated once we maintain rolling history; using null placeholder for now
-        typical_price_30d: null,
-        price_p90_30d: null,
+        typical_price_30d: anchorMedian,
+        price_p90_30d: anchorP90,
         is_low_confidence: isLowConfidence,
         updated_at: new Date().toISOString(),
       },
