@@ -4,6 +4,7 @@
 
 export type Timeframe = '1d' | '7d' | '30d';
 export type RankingMetric = 'bestToSell' | 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
+export type StatsMode = 'auto' | 'robust' | 'raw';
 
 export interface TopItemsQueryParams {
   worldOrDc?: string;
@@ -11,6 +12,7 @@ export interface TopItemsQueryParams {
   categories?: string[];
   craftableOnly?: boolean;
   nonCraftableOnly?: boolean;
+  mode?: StatsMode;
   minSalesVelocity?: number;
   minRevenue?: number;
   maxListings?: number | null;

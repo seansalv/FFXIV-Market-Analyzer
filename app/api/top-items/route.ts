@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
-import type { TopItemsQueryParams, TopItemsResponse, MarketItem, Timeframe } from '@/lib/types/api';
+import type { TopItemsQueryParams, TopItemsResponse, MarketItem, Timeframe, StatsMode } from '@/lib/types/api';
 import { getAllNAWorlds, getWorldsByDataCenter, getWorldByName } from '@/lib/db/worlds';
 import { z } from 'zod';
 
@@ -23,6 +23,7 @@ const querySchema = z.object({
   categories: z.string().optional().transform((val) => (val ? val.split(',') : [])),
   craftableOnly: z.string().optional().transform((val) => val === 'true'),
   nonCraftableOnly: z.string().optional().transform((val) => val === 'true'),
+  mode: z.enum(['auto', 'robust', 'raw']).optional().default('auto'),
   minSalesVelocity: z.string().optional().transform((val) => (val ? parseFloat(val) : undefined)),
   minRevenue: z.string().optional().transform((val) => (val ? parseInt(val, 10) : undefined)),
   maxListings: z.string().optional().transform((val) => (val ? parseInt(val, 10) : null)),
@@ -45,6 +46,7 @@ export async function GET(request: NextRequest) {
       topN: number;
       rankingMetric: 'bestToSell' | 'revenue' | 'volume' | 'avgPrice' | 'profit' | 'roi';
       timeframe: Timeframe;
+      mode: StatsMode;
     };
 
     // Get worlds to query and determine aggregation mode
@@ -100,6 +102,13 @@ export async function GET(request: NextRequest) {
         min_price,
         max_price,
         active_listings,
+        robust_avg_price,
+        robust_total_revenue,
+        robust_units_sold,
+        robust_sample_size,
+        typical_price_30d,
+        price_p90_30d,
+        is_low_confidence,
         items!inner(id, name, category, is_craftable),
         worlds!inner(id, name, data_center)
       `)
@@ -159,6 +168,8 @@ export async function GET(request: NextRequest) {
       dataCenter: string;
       totalUnitsSold: number;
       totalRevenue: number;
+      rawRevenue: number;
+      robustEligible: boolean;
       priceSum: number;
       priceCount: number;
       minPrice: number | null;
@@ -171,6 +182,43 @@ export async function GET(request: NextRequest) {
       const item = stat.items;
       const world = stat.worlds;
       if (!item || !world) continue;
+
+      const hasRobust =
+        stat.robust_sample_size !== null &&
+        stat.robust_sample_size !== undefined &&
+        stat.robust_sample_size >= 5 &&
+        stat.robust_units_sold > 0 &&
+        stat.robust_avg_price !== null;
+      const useRobust =
+        params.mode === 'robust'
+          ? hasRobust
+          : params.mode === 'raw'
+          ? false
+          : hasRobust;
+
+      const anchor = stat.typical_price_30d || null;
+      const guardCap = anchor ? anchor * 20 : null;
+
+      const chosenUnits = useRobust ? stat.robust_units_sold || 0 : stat.units_sold || 0;
+      let chosenRevenue = useRobust
+        ? Number(stat.robust_total_revenue) || 0
+        : Number(stat.total_revenue) || 0;
+      let chosenAvg = useRobust
+        ? stat.robust_avg_price || 0
+        : stat.avg_price || 0;
+
+      // Mild guard when falling back to raw: cap avg price against anchor*20 to reduce RMT spikes if anchor exists
+      if (!useRobust && guardCap && chosenAvg > guardCap) {
+        chosenAvg = guardCap;
+      }
+      if (!useRobust && guardCap && chosenRevenue > guardCap * chosenUnits) {
+        chosenRevenue = guardCap * chosenUnits;
+      }
+
+      // If mode is robust and no robust data, skip this stat
+      if (params.mode === 'robust' && !hasRobust) {
+        continue;
+      }
 
       // Key: aggregate by item only (DC view) or item-world (specific world view)
       const key = shouldAggregateByDC ? String(stat.item_id) : `${stat.item_id}-${stat.world_id}`;
@@ -190,6 +238,8 @@ export async function GET(request: NextRequest) {
           dataCenter: shouldAggregateByDC ? (dataCenterName?.toLowerCase() || world.data_center) : world.data_center,
           totalUnitsSold: 0,
           totalRevenue: 0,
+          rawRevenue: 0,
+          robustEligible: hasRobust,
           priceSum: 0,
           priceCount: 0,
           minPrice: null,
@@ -200,11 +250,13 @@ export async function GET(request: NextRequest) {
       }
 
       const agg = aggregatedItems.get(key)!;
-      agg.totalUnitsSold += stat.units_sold || 0;
-      agg.totalRevenue += Number(stat.total_revenue) || 0;
+      agg.totalUnitsSold += chosenUnits;
+      agg.totalRevenue += chosenRevenue;
+      agg.rawRevenue += Number(stat.total_revenue) || 0;
+      agg.robustEligible = agg.robustEligible || hasRobust;
       
-      if (stat.avg_price > 0) {
-        agg.priceSum += stat.avg_price;
+      if (chosenAvg > 0) {
+        agg.priceSum += chosenAvg;
         agg.priceCount += 1;
       }
       
