@@ -170,6 +170,7 @@ export async function GET(request: NextRequest) {
       totalRevenue: number;
       rawRevenue: number;
       robustEligible: boolean;
+      anchorPrice: number | null;
       priceSum: number;
       priceCount: number;
       minPrice: number | null;
@@ -240,6 +241,7 @@ export async function GET(request: NextRequest) {
           totalRevenue: 0,
           rawRevenue: 0,
           robustEligible: hasRobust,
+          anchorPrice: stat.typical_price_30d ?? null,
           priceSum: 0,
           priceCount: 0,
           minPrice: null,
@@ -290,6 +292,7 @@ export async function GET(request: NextRequest) {
       profitPerUnit: number | null;
       marginPercent: number | null;
       activeListings: number;
+      anchorPrice: number | null;
     }> = [];
 
     for (const [, agg] of aggregatedItems) {
@@ -327,6 +330,7 @@ export async function GET(request: NextRequest) {
         profitPerUnit,
         marginPercent,
         activeListings: agg.latestActiveListings,
+        anchorPrice: agg.anchorPrice,
       });
     }
 
@@ -339,12 +343,58 @@ export async function GET(request: NextRequest) {
       const minPriceBestToSell = 200;
       // - Minimum velocity: relaxed to 0.2/day (~6 per month) to avoid over-pruning
       // - Must have actual sales and revenue
-      filteredItems = itemsWithMetrics.filter(item => 
-        item.unitsSold > 0 && 
-        item.totalRevenue > 0 && 
-        item.salesVelocity >= 0.2 &&
-        item.avgPrice >= minPriceBestToSell // Allow cheaper items, still block shards/crystals
-      );
+      filteredItems = itemsWithMetrics.filter(item => {
+        // Anchor guard: if anchor exists and price is wildly above it with low velocity, drop
+        const anchor = item.anchorPrice;
+        const anchorExceeded =
+          anchor !== null &&
+          item.salesVelocity < 1 &&
+          item.avgPrice > anchor * 10; // tighter than ingest guard for bestToSell view
+        // Fallback guard when no anchor: drop extreme price with very low velocity
+        const extremeLowVelocity =
+          anchor === null &&
+          item.salesVelocity < 0.5 &&
+          item.avgPrice > 5_000_000;
+        // Guard for very spiky price distributions: drop if max is far above average at low velocity
+        const spikyPrice =
+          item.salesVelocity < 0.5 &&
+          item.maxPrice !== null &&
+          item.maxPrice > item.avgPrice * 5;
+        // Guard for very high max price with low velocity
+        const veryHighMaxLowVel =
+          item.salesVelocity < 0.5 &&
+          item.maxPrice !== null &&
+          item.maxPrice > 20_000_000;
+        // Guard for extreme max vs avg with low-moderate velocity
+        const extremeMaxVsAvg =
+          item.maxPrice !== null &&
+          item.salesVelocity < 3 &&
+          item.maxPrice > item.avgPrice * 8;
+        // Guard for very high max price with modest velocity
+        const veryHighMaxModerateVel =
+          item.maxPrice !== null &&
+          item.salesVelocity < 5 &&
+          item.maxPrice > 50_000_000;
+        // Guard for high max with low-moderate velocity
+        const highMaxLowModerateVel =
+          item.maxPrice !== null &&
+          item.salesVelocity < 3 &&
+          item.maxPrice > 20_000_000;
+
+        return (
+          item.unitsSold > 0 && 
+          item.totalRevenue > 0 && 
+          item.salesVelocity >= 0.2 &&
+          item.avgPrice >= minPriceBestToSell &&
+          !anchorExceeded &&
+          !extremeLowVelocity &&
+          !spikyPrice &&
+          !veryHighMaxLowVel &&
+          !extremeMaxVsAvg &&
+          !veryHighMaxModerateVel &&
+          !highMaxLowModerateVel // Allow cheaper items, still block shards/crystals and obvious RMT spikes
+        );
+      });
       
       // If we filtered out everything, try without price filter
       if (filteredItems.length === 0) {

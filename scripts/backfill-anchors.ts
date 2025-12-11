@@ -8,7 +8,28 @@
  *   npx tsx scripts/backfill-anchors.ts
  */
 
+// Load env first (same pattern as ingest)
+import dotenv from 'dotenv';
+import { resolve } from 'path';
+import { existsSync } from 'fs';
 import { supabaseAdmin } from '../lib/supabase/server';
+
+const envPath = resolve(process.cwd(), '.env.local');
+if (!existsSync(envPath)) {
+  console.error(`❌ .env.local not found at ${envPath}`);
+  process.exit(1);
+}
+const envResult = dotenv.config({ path: envPath });
+if (envResult.error) {
+  console.error('❌ Error loading .env.local:', envResult.error);
+  process.exit(1);
+}
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error(
+    `❌ Missing Supabase environment variables. NEXT_PUBLIC_SUPABASE_URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL ? 'SET' : 'MISSING'}, SUPABASE_SERVICE_ROLE_KEY: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET' : 'MISSING'}`
+  );
+  process.exit(1);
+}
 
 type StatRow = {
   id: number;
@@ -70,7 +91,14 @@ async function main() {
     groups.get(key)!.push(row);
   }
 
-  const updates: Array<{ id: number; typical_price_30d: number | null; price_p90_30d: number | null }> = [];
+  const updates: Array<{
+    id: number;
+    item_id: number;
+    world_id: number;
+    stat_date: string;
+    typical_price_30d: number | null;
+    price_p90_30d: number | null;
+  }> = [];
 
   for (const [, groupRows] of groups) {
     // groupRows already sorted by stat_date ascending
@@ -96,6 +124,9 @@ async function main() {
 
       updates.push({
         id: current.id,
+        item_id: current.item_id,
+        world_id: current.world_id,
+        stat_date: current.stat_date,
         typical_price_30d: typical,
         price_p90_30d: p90,
       });
