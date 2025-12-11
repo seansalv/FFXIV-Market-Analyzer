@@ -5,6 +5,12 @@ import { supabaseAdmin } from '../supabase/server';
 import type { MarketSale, DailyItemStats } from '../types/database';
 import type { UniversalisMarketData, UniversalisHistoryEntry } from '../types/api';
 
+// Tunable thresholds for robust stats
+const ANCHOR_OUTLIER_MULTIPLIER = 20; // cap/skip if price >> anchor
+const DAILY_CLAMP_MULTIPLIER = 10; // clamp remaining prices to median*10 (or anchor*10)
+const CHEAP_QTY1_MULTIPLIER = 20; // qty=1 guard for cheap items vs q3
+const MIN_SAMPLE_FOR_ROBUST = 5; // require at least 5 sales for full IQR/MAD
+
 function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -152,11 +158,11 @@ export async function upsertDailyStats(
   const { q1, q3 } = quartiles(prices);
   const iqr = q3 - q1;
   const dailyMad = mad(prices, priceMedian);
-  const hasEnoughSales = recentHistory.length >= 5;
+  const hasEnoughSales = recentHistory.length >= MIN_SAMPLE_FOR_ROBUST;
 
   // Anchor: prefer rolling 30d median, fallback to today's median
   const anchor = anchorMedian ?? (priceMedian > 0 ? priceMedian : null);
-  const anchorUpper = anchor ? anchor * 20 : Infinity; // obvious RMT guard
+  const anchorUpper = anchor ? anchor * ANCHOR_OUTLIER_MULTIPLIER : Infinity; // obvious RMT guard
 
   const filteredSales = recentHistory.filter((entry) => {
     const p = entry.pricePerUnit;
@@ -172,14 +178,14 @@ export async function upsertDailyStats(
 
     // Qty=1 guard only for cheap items
     const isLikelyCheap = anchor !== null && anchor < 1000;
-    if (isLikelyCheap && entry.quantity === 1 && p > q3 * 20) return false;
+    if (isLikelyCheap && entry.quantity === 1 && p > q3 * CHEAP_QTY1_MULTIPLIER) return false;
 
     return true;
   });
 
   // Clamp remaining prices so a single sale cannot dominate
   const clampBase = anchor ?? priceMedian;
-  const clampCap = clampBase > 0 ? clampBase * 10 : Infinity;
+  const clampCap = clampBase > 0 ? clampBase * DAILY_CLAMP_MULTIPLIER : Infinity;
   const clampedSales = filteredSales.map((s) => ({
     ...s,
     pricePerUnit: clampCap !== Infinity ? Math.min(s.pricePerUnit, clampCap) : s.pricePerUnit,

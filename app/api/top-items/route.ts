@@ -183,7 +183,7 @@ export async function GET(request: NextRequest) {
       const world = stat.worlds;
       if (!item || !world) continue;
 
-      const hasRobust =
+    const hasRobust =
         stat.robust_sample_size !== null &&
         stat.robust_sample_size !== undefined &&
         stat.robust_sample_size >= 5 &&
