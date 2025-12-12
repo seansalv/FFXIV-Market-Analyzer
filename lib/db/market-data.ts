@@ -79,7 +79,8 @@ export async function upsertMarketSales(
     // Use upsert with conflict on (item_id, world_id, sale_timestamp, price_per_unit, quantity)
     // to avoid duplicates, but since we don't have a unique constraint on that combination,
     // we'll just insert and let the database handle it
-    const { error } = await supabaseAdmin
+    // Type assertion needed due to Proxy wrapper breaking type inference
+    const { error } = await (supabaseAdmin as any)
       .from('market_sales')
       .insert(batch);
 
@@ -202,7 +203,8 @@ export async function upsertDailyStats(
     robustPrices.length > 0 ? Math.round(median(robustPrices)) : null;
   const isLowConfidence = robustSampleSize < 5;
 
-  const { error } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { error } = await (supabaseAdmin as any)
     .from('daily_item_stats')
     .upsert(
       {
