@@ -3,7 +3,7 @@
  */
 import { supabaseAdmin } from '../supabase/server';
 import type { Item, Recipe } from '../types/database';
-import type { Database } from '../supabase/database.types';
+import type { Database, Json } from '../supabase/database.types';
 
 type ItemsInsert = Database['public']['Tables']['items']['Insert'];
 
@@ -45,7 +45,7 @@ export async function upsertRecipe(recipe: {
   const payload: RecipesInsert = {
     item_id: recipe.item_id,
     material_cost: recipe.material_cost,
-    material_list: recipe.material_list ?? null,
+    material_list: (recipe.material_list ?? null) as Json | null,
     last_updated: new Date().toISOString(),
   };
   
