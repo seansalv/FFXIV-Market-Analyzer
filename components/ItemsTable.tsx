@@ -225,7 +225,7 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
                           {item.name}
                         </p>
                         {item.isCraftable && (
-                          <span title="Craftable">
+                          <span title="Craftable" aria-label="Craftable item">
                             <Sparkles className="w-4 h-4 text-amber-500" />
                           </span>
                         )}
