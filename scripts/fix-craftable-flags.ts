@@ -14,7 +14,8 @@ async function fixCraftableFlags() {
   console.log('🔧 Fixing is_craftable flags in items table...\n');
 
   // Get all items that have recipes
-  const { data: recipes, error: recipesError } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { data: recipes, error: recipesError } = await (supabaseAdmin as any)
     .from('recipes')
     .select('item_id');
 
@@ -23,11 +24,12 @@ async function fixCraftableFlags() {
     return;
   }
 
-  const craftableItemIds = new Set(recipes?.map(r => r.item_id) || []);
+  const craftableItemIds = new Set((recipes as any[])?.map((r: any) => r.item_id) || []);
   console.log(`Found ${craftableItemIds.size} items with recipes\n`);
 
   // Update all items with recipes to is_craftable = true
-  const { count: updatedTrue, error: updateTrueError } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { count: updatedTrue, error: updateTrueError } = await (supabaseAdmin as any)
     .from('items')
     .update({ is_craftable: true })
     .in('id', Array.from(craftableItemIds))
@@ -41,7 +43,8 @@ async function fixCraftableFlags() {
   console.log(`✅ Updated ${updatedTrue} items to is_craftable = true\n`);
 
   // Ensure all OTHER items are set to is_craftable = false
-  const { count: updatedFalse, error: updateFalseError } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { count: updatedFalse, error: updateFalseError } = await (supabaseAdmin as any)
     .from('items')
     .update({ is_craftable: false })
     .not('id', 'in', `(${Array.from(craftableItemIds).join(',')})`)

@@ -58,7 +58,8 @@ async function checkItems() {
   // Check daily_item_stats that have data
   console.log('\n---\nChecking daily_item_stats with is_craftable join...\n');
   
-  const { data: statsWithCraftable, error } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { data: statsWithCraftable, error } = await (supabaseAdmin as any)
     .from('daily_item_stats')
     .select(`
       item_id,
@@ -70,8 +71,8 @@ async function checkItems() {
     console.error('Error querying stats:', error);
   } else {
     console.log('Sample stats with item craftable status:');
-    for (const stat of statsWithCraftable || []) {
-      const item = (stat as any).items;
+    for (const stat of (statsWithCraftable || []) as any[]) {
+      const item = stat.items;
       console.log(`  Item ${stat.item_id}: ${item?.name} - is_craftable: ${item?.is_craftable}`);
     }
   }

@@ -92,7 +92,8 @@ async function updateCraftableFlags(craftableItemIds: Set<number>) {
   console.log('📝 Updating is_craftable flags in database...\n');
   
   // Get all item IDs we have in the database
-  const { data: allItems, error: itemsError } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { data: allItems, error: itemsError } = await (supabaseAdmin as any)
     .from('items')
     .select('id');
   
@@ -101,7 +102,7 @@ async function updateCraftableFlags(craftableItemIds: Set<number>) {
     return;
   }
   
-  const allItemIds = allItems?.map(i => i.id) || [];
+  const allItemIds = (allItems as any[])?.map((i: any) => i.id) || [];
   console.log(`   Found ${allItemIds.length} items in database`);
   
   // Determine which items are craftable (intersection of our items and craftable items)
@@ -116,7 +117,8 @@ async function updateCraftableFlags(craftableItemIds: Set<number>) {
     
     for (let i = 0; i < ourCraftableItems.length; i += batchSize) {
       const batch = ourCraftableItems.slice(i, i + batchSize);
-      const { error } = await supabaseAdmin
+      // Type assertion needed due to Proxy wrapper breaking type inference
+      const { error } = await (supabaseAdmin as any)
         .from('items')
         .update({ is_craftable: true })
         .in('id', batch);
@@ -160,12 +162,12 @@ async function verifyAndReport() {
   console.log(`   Non-craftable items: ${notCraftable}`);
   
   console.log('\n   Sample craftable items:');
-  for (const item of sampleCraftable || []) {
+  for (const item of (sampleCraftable || []) as any[]) {
     console.log(`     - ${item.name} (ID: ${item.id})`);
   }
   
   console.log('\n   Sample non-craftable items:');
-  for (const item of sampleNotCraftable || []) {
+  for (const item of (sampleNotCraftable || []) as any[]) {
     console.log(`     - ${item.name} (ID: ${item.id})`);
   }
 }
