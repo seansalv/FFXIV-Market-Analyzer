@@ -59,9 +59,9 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
 
   const formatGil = (amount: number | undefined | null): string => {
     const safe = typeof amount === 'number' && Number.isFinite(amount) ? amount : 0;
-    if (amount >= 1000000) {
+    if (safe >= 1000000) {
       return `${(safe / 1000000).toFixed(2)}M`;
-    } else if (amount >= 1000) {
+    } else if (safe >= 1000) {
       return `${(safe / 1000).toFixed(1)}K`;
     }
     return safe.toLocaleString();
