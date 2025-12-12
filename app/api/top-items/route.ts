@@ -96,6 +96,7 @@ export async function GET(request: NextRequest) {
       .select(`
         item_id,
         world_id,
+        stat_date,
         units_sold,
         total_revenue,
         avg_price,
@@ -171,8 +172,9 @@ export async function GET(request: NextRequest) {
       rawRevenue: number;
       robustEligible: boolean;
       anchorPrice: number | null;
-      priceSum: number;
-      priceCount: number;
+      // Most recent day's price (for avgPrice display)
+      mostRecentPrice: number | null;
+      mostRecentDate: string | null;
       minPrice: number | null;
       maxPrice: number | null;
       latestActiveListings: number;
@@ -242,8 +244,8 @@ export async function GET(request: NextRequest) {
           rawRevenue: 0,
           robustEligible: hasRobust,
           anchorPrice: stat.typical_price_30d ?? null,
-          priceSum: 0,
-          priceCount: 0,
+          mostRecentPrice: null,
+          mostRecentDate: null,
           minPrice: null,
           maxPrice: null,
           latestActiveListings: stat.active_listings || 0,
@@ -253,13 +255,25 @@ export async function GET(request: NextRequest) {
 
       const agg = aggregatedItems.get(key)!;
       agg.totalUnitsSold += chosenUnits;
-      agg.totalRevenue += chosenRevenue;
+      
+      // Apply revenue capping based on anchor to prevent RMT spikes from dominating
+      const revenueAnchor = stat.typical_price_30d ?? agg.anchorPrice;
+      const revenueCap = revenueAnchor && chosenUnits > 0 ? revenueAnchor * chosenUnits * 10 : null; // Cap at 10x anchor price per unit
+      const cappedRevenue = revenueCap && chosenRevenue > revenueCap ? revenueCap : chosenRevenue;
+      
+      agg.totalRevenue += cappedRevenue;
       agg.rawRevenue += Number(stat.total_revenue) || 0;
       agg.robustEligible = agg.robustEligible || hasRobust;
       
-      if (chosenAvg > 0) {
-        agg.priceSum += chosenAvg;
-        agg.priceCount += 1;
+      // Track most recent day's price (for avgPrice display - more representative of current market)
+      const statDate = stat.stat_date;
+      if (statDate && (agg.mostRecentDate === null || statDate > agg.mostRecentDate)) {
+        agg.mostRecentDate = statDate;
+        agg.mostRecentPrice = chosenAvg > 0 ? Math.round(chosenAvg) : null;
+        // Update anchor to most recent if available
+        if (stat.typical_price_30d !== null) {
+          agg.anchorPrice = stat.typical_price_30d;
+        }
       }
       
       if (stat.min_price !== null) {
@@ -294,7 +308,11 @@ export async function GET(request: NextRequest) {
     }> = [];
 
     for (const [, agg] of aggregatedItems) {
-      const avgPrice = agg.priceCount > 0 ? Math.round(agg.priceSum / agg.priceCount) : 0;
+      // Use most recent day's price as avgPrice (more representative of current market, less affected by old outliers)
+      // Fallback to weighted average if no recent price available
+      const avgPrice = agg.mostRecentPrice !== null 
+        ? agg.mostRecentPrice 
+        : (agg.totalUnitsSold > 0 ? Math.round(agg.totalRevenue / agg.totalUnitsSold) : 0);
       const salesVelocity = agg.totalUnitsSold / days;
 
       // Apply threshold filters
