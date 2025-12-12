@@ -225,7 +225,9 @@ export function ItemsTable({ filters, isLoading: externalLoading }: ItemsTablePr
                           {item.name}
                         </p>
                         {item.isCraftable && (
-                          <Sparkles className="w-4 h-4 text-amber-500" title="Craftable" />
+                          <span title="Craftable">
+                            <Sparkles className="w-4 h-4 text-amber-500" />
+                          </span>
                         )}
                       </div>
                       <p className="text-slate-400 text-sm">{item.category || 'Other'}</p>
