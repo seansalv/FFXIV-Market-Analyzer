@@ -139,7 +139,8 @@ async function main() {
   let written = 0;
   for (let i = 0; i < updates.length; i += batchSize) {
     const batch = updates.slice(i, i + batchSize);
-    const { error: upsertError } = await supabaseAdmin
+    // Type assertion needed due to Proxy wrapper breaking type inference
+    const { error: upsertError } = await (supabaseAdmin as any)
       .from('daily_item_stats')
       .upsert(batch, { onConflict: 'id' });
     if (upsertError) {
