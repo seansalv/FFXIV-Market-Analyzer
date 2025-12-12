@@ -3,6 +3,9 @@
  */
 import { supabaseAdmin } from '../supabase/server';
 import type { Item, Recipe } from '../types/database';
+import type { Database } from '../supabase/database.types';
+
+type ItemsInsert = Database['public']['Tables']['items']['Insert'];
 
 export async function upsertItem(item: {
   id: number;
@@ -11,45 +14,45 @@ export async function upsertItem(item: {
   is_craftable?: boolean;
   icon_url?: string | null;
 }): Promise<void> {
+  const payload: ItemsInsert = {
+    id: item.id,
+    name: item.name,
+    category: item.category ?? null,
+    is_craftable: item.is_craftable ?? false,
+    icon_url: item.icon_url ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  
   const { error } = await supabaseAdmin
     .from('items')
-    .upsert(
-      {
-        id: item.id,
-        name: item.name,
-        category: item.category ?? null,
-        is_craftable: item.is_craftable ?? false,
-        icon_url: item.icon_url ?? null,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: 'id',
-      }
-    );
+    .upsert(payload, {
+      onConflict: 'id',
+    });
 
   if (error) {
     throw new Error(`Failed to upsert item ${item.id}: ${error.message}`);
   }
 }
 
+type RecipesInsert = Database['public']['Tables']['recipes']['Insert'];
+
 export async function upsertRecipe(recipe: {
   item_id: number;
   material_cost: number;
   material_list?: Record<string, unknown> | null;
 }): Promise<void> {
+  const payload: RecipesInsert = {
+    item_id: recipe.item_id,
+    material_cost: recipe.material_cost,
+    material_list: recipe.material_list ?? null,
+    last_updated: new Date().toISOString(),
+  };
+  
   const { error } = await supabaseAdmin
     .from('recipes')
-    .upsert(
-      {
-        item_id: recipe.item_id,
-        material_cost: recipe.material_cost,
-        material_list: recipe.material_list ?? null,
-        last_updated: new Date().toISOString(),
-      },
-      {
-        onConflict: 'item_id',
-      }
-    );
+    .upsert(payload, {
+      onConflict: 'item_id',
+    });
 
   if (error) {
     throw new Error(`Failed to upsert recipe for item ${recipe.item_id}: ${error.message}`);
