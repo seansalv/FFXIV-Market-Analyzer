@@ -23,7 +23,8 @@ export async function upsertItem(item: {
     updated_at: new Date().toISOString(),
   };
   
-  const { error } = await supabaseAdmin
+  // Type assertion needed due to Proxy wrapper breaking type inference
+  const { error } = await (supabaseAdmin as any)
     .from('items')
     .upsert(payload, {
       onConflict: 'id',
@@ -48,7 +49,7 @@ export async function upsertRecipe(recipe: {
     last_updated: new Date().toISOString(),
   };
   
-  const { error } = await supabaseAdmin
+  const { error } = await (supabaseAdmin as any)
     .from('recipes')
     .upsert(payload, {
       onConflict: 'item_id',
